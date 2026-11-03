@@ -2,8 +2,11 @@ package printer
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"syscall"
 )
 
 // Device writes jobs straight to the printer's device file, such as
@@ -14,7 +17,12 @@ type Device struct {
 
 func (d Device) Print(_ context.Context, job []byte) error {
 	f, err := os.OpenFile(d.Path, os.O_WRONLY, 0)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return fmt.Errorf("printer %s: %w", d.Path, ErrNotFound)
+	case errors.Is(err, syscall.EBUSY):
+		return fmt.Errorf("printer %s: %w", d.Path, ErrBusy)
+	case err != nil:
 		return fmt.Errorf("printer %s: %w", d.Path, err)
 	}
 	if _, err := f.Write(job); err != nil {

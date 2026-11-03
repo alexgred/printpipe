@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -114,17 +116,14 @@ func (p *recorder) Print(_ context.Context, job []byte) error {
 	return nil
 }
 
+// A foreign page cannot print, but it can read why, so that its developer
+// sees the origin is not configured rather than a network failure.
 func TestForeignOriginCannotPrint(t *testing.T) {
 	for _, origin := range []string{"https://evil.example", "http://localhost:3000", "null", ""} {
 		t.Run(origin, func(t *testing.T) {
 			p := &recorder{}
 			rec := do(newHandler(t, p), printRequest(origin, label("1")))
-			if rec.Code != http.StatusForbidden {
-				t.Errorf("status %d, want 403", rec.Code)
-			}
-			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-				t.Errorf("Access-Control-Allow-Origin %q, want none", got)
-			}
+			checkError(t, rec, origin, http.StatusForbidden, "origin_not_allowed")
 			if len(p.jobs) != 0 {
 				t.Errorf("printed %q", p.jobs)
 			}
@@ -141,31 +140,24 @@ func preflight(origin string) *http.Request {
 	return r
 }
 
-func TestPreflightAllowsOnlyOwnOrigins(t *testing.T) {
+// A POST of application/octet-stream is preflighted, so every page passes the
+// preflight: otherwise a foreign page could not read the 403 of its POST.
+func TestPreflightLetsEveryPageReadTheAnswer(t *testing.T) {
 	h := newHandler(t, &recorder{})
-
-	rec := do(h, preflight("http://localhost:5173"))
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("own origin: status %d; body: %s", rec.Code, rec.Body)
-	}
-	for name, want := range map[string]string{
-		"Access-Control-Allow-Origin":          "http://localhost:5173",
-		"Access-Control-Allow-Methods":         "POST",
-		"Access-Control-Allow-Headers":         "Content-Type",
-		"Access-Control-Allow-Private-Network": "true",
-	} {
-		if got := rec.Header().Get(name); got != want {
-			t.Errorf("own origin: %s %q, want %q", name, got, want)
+	for _, origin := range []string{"http://localhost:5173", "https://evil.example"} {
+		rec := do(h, preflight(origin))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s: status %d; body: %s", origin, rec.Code, rec.Body)
 		}
-	}
-
-	rec = do(h, preflight("https://evil.example"))
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("foreign origin: status %d, want 403", rec.Code)
-	}
-	for _, name := range []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Private-Network"} {
-		if got := rec.Header().Get(name); got != "" {
-			t.Errorf("foreign origin: %s %q, want none", name, got)
+		for name, want := range map[string]string{
+			"Access-Control-Allow-Origin":          origin,
+			"Access-Control-Allow-Methods":         "POST",
+			"Access-Control-Allow-Headers":         "Content-Type",
+			"Access-Control-Allow-Private-Network": "",
+		} {
+			if got := rec.Header().Get(name); got != want {
+				t.Errorf("%s: %s %q, want %q", origin, name, got, want)
+			}
 		}
 	}
 }
@@ -199,11 +191,9 @@ func TestJobPrintsOneToTenLabels(t *testing.T) {
 				}
 				return
 			}
-			if rec.Code != http.StatusUnprocessableEntity || len(p.jobs) != 0 {
-				t.Errorf("status %d, %d jobs; want 422 and none", rec.Code, len(p.jobs))
-			}
-			if got := rec.Header().Get("Access-Control-Allow-Origin"); got != app {
-				t.Errorf("the page cannot read the error: Access-Control-Allow-Origin %q", got)
+			checkError(t, rec, app, http.StatusUnprocessableEntity, "bad_job")
+			if len(p.jobs) != 0 {
+				t.Errorf("printed %q", p.jobs)
 			}
 		})
 	}
@@ -213,7 +203,75 @@ func TestOversizedJobIsRefused(t *testing.T) {
 	p := &recorder{}
 	job := append(bytes.Repeat([]byte("CLS\r\n"), 20000), "PRINT 1,1\r\n"...)
 	rec := do(newHandler(t, p), printRequest(app, job))
-	if rec.Code != http.StatusRequestEntityTooLarge || len(p.jobs) != 0 {
-		t.Errorf("status %d, %d jobs; want 413 and none", rec.Code, len(p.jobs))
+	checkError(t, rec, app, http.StatusRequestEntityTooLarge, "bad_job")
+	if len(p.jobs) != 0 {
+		t.Errorf("printed %q", p.jobs)
+	}
+}
+
+func TestEmptyJobIsRefused(t *testing.T) {
+	p := &recorder{}
+	rec := do(newHandler(t, p), printRequest(app, nil))
+	checkError(t, rec, app, http.StatusBadRequest, "bad_job")
+	if len(p.jobs) != 0 {
+		t.Errorf("printed %q", p.jobs)
+	}
+}
+
+// failing is a printer whose every job fails with err.
+type failing struct{ err error }
+
+func (p failing) Print(context.Context, []byte) error { return p.err }
+
+// apiError is the body of every error answer.
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// checkError checks an error answer: its status, its code, a message for
+// people, and that the page may read it.
+func checkError(t *testing.T, rec *httptest.ResponseRecorder, origin string, status int, code string) {
+	t.Helper()
+	if rec.Code != status {
+		t.Errorf("status %d, want %d; body: %s", rec.Code, status, rec.Body)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type %q, want application/json", got)
+	}
+	var body apiError
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body %s: %v", rec.Body, err)
+	}
+	if body.Code != code {
+		t.Errorf("code %q, want %q", body.Code, code)
+	}
+	if body.Message == "" {
+		t.Errorf("no message: %s", rec.Body)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Errorf("Access-Control-Allow-Origin %q, want %q", got, origin)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Private-Network"); got != "" {
+		t.Errorf("Access-Control-Allow-Private-Network %q, want none", got)
+	}
+}
+
+func TestPrinterFailuresHaveCodes(t *testing.T) {
+	for _, tc := range []struct {
+		err    error
+		status int
+		code   string
+	}{
+		{fmt.Errorf("usb:1FC9:2016: %w", printer.ErrNotFound), http.StatusBadGateway, "printer_not_found"},
+		{fmt.Errorf("two XP-365B: %w", printer.ErrAmbiguous), http.StatusBadGateway, "printer_ambiguous"},
+		{fmt.Errorf("/dev/usb/lp0: %w", printer.ErrBusy), http.StatusBadGateway, "printer_busy"},
+		{fmt.Errorf("usb:1FC9:2016: %w", printer.ErrNotResponding), http.StatusGatewayTimeout, "printer_not_responding"},
+		{errors.New("lp: something went wrong"), http.StatusBadGateway, "print_failed"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			rec := do(newHandler(t, failing{tc.err}), printRequest(app, label("1")))
+			checkError(t, rec, app, tc.status, tc.code)
+		})
 	}
 }

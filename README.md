@@ -31,7 +31,19 @@ printpipe version     print the version (offline)
 The agent listens on `127.0.0.1` only. There is no token: the `Origin` check keeps other sites out.
 
 - `GET /health` → `{"name": "printpipe", "version": "…", "pid": …}`, readable by any page (`Access-Control-Allow-Origin` is the requesting origin).
-- `POST /print` with the job as the body (`application/octet-stream`, at most 64 KB) from one of `origins`. The job must print 1 to 10 labels in total, counted over its `PRINT m[,n]` commands as m·n.
+- `POST /print` with the job as the body (`application/octet-stream`, at most 64 KB) from one of `origins`. The job must print 1 to 10 labels in total, counted over its `PRINT m[,n]` commands as m·n. Success (`204`) means the job was **sent** to the printer; it is not followed further.
+
+Every answer, errors included, carries `Access-Control-Allow-Origin: <requesting origin>`, so a page can always read why it did not print. Errors are JSON `{"code": "…", "message": "…"}` with an English `message`; read the `code`, the HTTP status is only a rough class:
+
+| `code` | when | HTTP |
+|---|---|---|
+| `printer_not_found` | the configured device or queue is not found | 502 |
+| `printer_ambiguous` | several matching USB devices | 502 |
+| `printer_busy` | the device is held by another program | 502 |
+| `printer_not_responding` | the write did not finish in time | 504 |
+| `print_failed` | any other OS or CUPS error | 502 |
+| `origin_not_allowed` | the page's origin is not in `origins` | 403 |
+| `bad_job` | empty job / larger than 64 KB / not 1 to 10 labels | 400 / 413 / 422 |
 
 ## Development
 

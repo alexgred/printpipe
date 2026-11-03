@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"slices"
+
+	"github.com/alexgred/printpipe/internal/printer"
 )
 
 // Printer takes a print job, the bytes exactly as the printer gets them.
@@ -32,75 +34,95 @@ type Options struct {
 const maxJob = 64 << 10
 
 // Handler serves GET /health and POST /print.
+//
+// Every answer carries CORS headers for the requesting page, errors included,
+// so that a page can always read why it did not print. Only the configured
+// origins may print; that is checked by POST /print itself, not by CORS.
 func Handler(o Options, p Printer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		// Any page may read it: a client tells the agent is running from it
-		// even before it is allowed to print.
-		h := w.Header()
-		h.Add("Vary", "Origin")
-		if origin := r.Header.Get("Origin"); origin != "" {
-			h.Set("Access-Control-Allow-Origin", origin)
-		}
-		h.Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 			PID     int    `json:"pid"`
 		}{"printpipe", o.Version, o.PID})
 	})
-	// Any page in the browser can call the agent; only the configured ones may,
-	// and only they get CORS headers. A request without Origin did not come
-	// from a page and is refused too.
-	allow := func(w http.ResponseWriter, r *http.Request) bool {
-		w.Header().Add("Vary", "Origin")
-		origin := r.Header.Get("Origin")
-		if !slices.Contains(o.Origins, origin) {
-			http.Error(w, "origin not allowed", http.StatusForbidden)
-			return false
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		return true
-	}
-	// The preflight of a POST with Content-Type: application/octet-stream.
-	// Chrome asks a public page's request to loopback for the private
-	// network permission as well.
+	// The preflight of a POST with Content-Type: application/octet-stream. It
+	// passes for any page, or a foreign page could not read the 403 of its
+	// POST.
 	mux.HandleFunc("OPTIONS /print", func(w http.ResponseWriter, r *http.Request) {
-		if !allow(w, r) {
-			return
-		}
 		h := w.Header()
 		h.Set("Access-Control-Allow-Methods", "POST")
 		h.Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
-			h.Set("Access-Control-Allow-Private-Network", "true")
-		}
 		h.Set("Access-Control-Max-Age", "600")
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("POST /print", func(w http.ResponseWriter, r *http.Request) {
-		if !allow(w, r) {
+		// Any page in the browser can call the agent; only the configured ones
+		// may print. A request without Origin did not come from a page and is
+		// refused too.
+		if origin := r.Header.Get("Origin"); !slices.Contains(o.Origins, origin) {
+			fail(w, http.StatusForbidden, "origin_not_allowed", fmt.Sprintf("The origin %q is not allowed to print.", origin))
 			return
 		}
 		job, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxJob))
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
-				http.Error(w, "The job is larger than 64 KB.", http.StatusRequestEntityTooLarge)
+				fail(w, http.StatusRequestEntityTooLarge, "bad_job", "The job is larger than 64 KB.")
 				return
 			}
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			fail(w, http.StatusBadRequest, "bad_job", "The job could not be read: "+err.Error())
+			return
+		}
+		if len(job) == 0 {
+			fail(w, http.StatusBadRequest, "bad_job", "The job is empty.")
 			return
 		}
 		if n := copies(job); n < copiesMin || n > copiesMax {
-			http.Error(w, fmt.Sprintf("A job prints %d to %d labels.", copiesMin, copiesMax), http.StatusUnprocessableEntity)
+			fail(w, http.StatusUnprocessableEntity, "bad_job", fmt.Sprintf("A job prints %d to %d labels.", copiesMin, copiesMax))
 			return
 		}
 		if err := p.Print(r.Context(), job); err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			printFailed(w, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Add("Vary", "Origin")
+		if origin := r.Header.Get("Origin"); origin != "" {
+			h.Set("Access-Control-Allow-Origin", origin)
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// fail answers with an error a page can read: a code for the page to act on
+// and an English message for people.
+func fail(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{code, message})
+}
+
+// printFailed answers with the code of the printer's failure.
+func printFailed(w http.ResponseWriter, err error) {
+	status, code := http.StatusBadGateway, "print_failed"
+	switch {
+	case errors.Is(err, printer.ErrNotFound):
+		code = "printer_not_found"
+	case errors.Is(err, printer.ErrAmbiguous):
+		code = "printer_ambiguous"
+	case errors.Is(err, printer.ErrBusy):
+		code = "printer_busy"
+	case errors.Is(err, printer.ErrNotResponding):
+		status, code = http.StatusGatewayTimeout, "printer_not_responding"
+	}
+	fail(w, status, code, err.Error())
 }

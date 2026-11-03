@@ -25,6 +25,10 @@ var (
 	writePrinter     = winspool.NewProc("WritePrinter")
 )
 
+// errorInvalidPrinterName is what OpenPrinter fails with when there is no
+// such printer.
+const errorInvalidPrinterName syscall.Errno = 1801
+
 // docInfo1 is DOC_INFO_1W.
 type docInfo1 struct {
 	docName    *uint16
@@ -45,6 +49,9 @@ func (q Queue) Print(_ context.Context, job []byte) error {
 	}
 	var h syscall.Handle
 	if r, _, err := openPrinter.Call(uintptr(unsafe.Pointer(name)), uintptr(unsafe.Pointer(&h)), 0); r == 0 {
+		if err == errorInvalidPrinterName {
+			return fmt.Errorf("printer %s: %w", q.Name, ErrNotFound)
+		}
 		return fail("OpenPrinter", err)
 	}
 	defer closePrinter.Call(uintptr(h))
