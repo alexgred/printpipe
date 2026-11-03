@@ -121,6 +121,7 @@ func TestServeRefusesAConfigItCannotWorkWith(t *testing.T) {
 		{"bad JSON", `{"port": "x"`, nil, "error: " + configPath + ": unexpected end of JSON input"},
 		{"no printer", `{"origins": ["https://app.example"]}`, nil, "error: " + configPath + ": no printer: set a queue or a device"},
 		{"queue and device", `{"origins": ["https://app.example"], "queue": "a", "device": "/dev/usb/lp0"}`, nil, "error: " + configPath + ": set either a queue or a device, not both"},
+		{"bad USB device", `{"origins": ["https://app.example"], "device": "usb:1FC9"}`, nil, "error: " + configPath + `: device "usb:1FC9": not two or three parts; want usb:VID:PID or usb:VID:PID:serial, such as usb:1FC9:2016`},
 		{"no origins", `{"queue": "a"}`, nil, "error: " + configPath + `: no "origins": no page could print`},
 		{"missing --config file", "", []string{"--config", "/nowhere.json"}, "error: open /nowhere.json: file does not exist"},
 	} {
@@ -137,5 +138,16 @@ func TestServeRefusesAConfigItCannotWorkWith(t *testing.T) {
 				t.Errorf("listened on %q", sys.listened)
 			}
 		})
+	}
+}
+
+// A usb: device is a USB printer found by its IDs, not a device file.
+func TestServePrintsToAUSBDevice(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "device": "usb:1fc9:2016:A1"}`)
+	srv := startServer(t, sys)
+	got := srv.stop()
+	if !strings.Contains(got.stderr, "printer: USB printer usb:1FC9:2016:A1,") {
+		t.Errorf("log %q does not name the USB printer", got.stderr)
 	}
 }

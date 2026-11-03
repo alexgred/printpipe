@@ -6,9 +6,9 @@ package models
 
 import (
 	_ "embed"
-	"strconv"
 	"strings"
 
+	"github.com/alexgred/printpipe/internal/printer"
 	"github.com/alexgred/printpipe/internal/testlabel"
 )
 
@@ -78,18 +78,9 @@ func By1284ID(id string) (Model, bool) {
 // ForDevice is the model a config device names: usb:VID:PID[:serial] with
 // the IDs in hex. A device file path names no model.
 func ForDevice(device string) (Model, bool) {
-	rest, ok := strings.CutPrefix(device, "usb:")
-	if !ok {
+	id, err := printer.ParseUSB(device)
+	if err != nil {
 		return Model{}, false
 	}
-	parts := strings.SplitN(rest, ":", 3)
-	if len(parts) < 2 {
-		return Model{}, false
-	}
-	vid, err1 := strconv.ParseUint(parts[0], 16, 16)
-	pid, err2 := strconv.ParseUint(parts[1], 16, 16)
-	if err1 != nil || err2 != nil {
-		return Model{}, false
-	}
-	return ByUSB(uint16(vid), uint16(pid))
+	return ByUSB(id.VID, id.PID)
 }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alexgred/printpipe/internal/config"
@@ -104,6 +105,12 @@ func pick(c config.Config, dryRun string, logger *log.Logger) (server.Printer, s
 		return nil, "", errors.New("set either a queue or a device, not both")
 	case c.Queue != "":
 		return printer.Queue{Name: c.Queue}, "queue " + strconv.Quote(c.Queue), nil
+	case strings.HasPrefix(c.Device, "usb:"):
+		id, err := printer.ParseUSB(c.Device)
+		if err != nil {
+			return nil, "", err
+		}
+		return printer.USB{ID: id}, "USB printer " + id.String(), nil
 	case c.Device != "":
 		return printer.Device{Path: c.Device}, "device " + c.Device, nil
 	default:

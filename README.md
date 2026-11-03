@@ -26,8 +26,10 @@ printpipe test-print  print the built-in test label through the running agent
 |---|---|
 | `port` | port on 127.0.0.1, default 8631 |
 | `origins` | the pages allowed to print, such as `["https://app.example"]` |
-| `queue` | the printer queue: a CUPS queue, or a Windows printer's name |
-| `device` | a device instead of a queue, such as `/dev/usb/lp0` on Linux |
+| `queue` | the printer queue: a CUPS queue, or an existing Windows printer's name |
+| `device` | a device instead of a queue: on Windows `usb:VID:PID[:serial]` in hex, such as `usb:1FC9:2016`; on Linux a device file such as `/dev/usb/lp0` |
+
+On Windows printpipe writes straight to the USB printer, with no driver, no queue and no admin rights. A `usb:` device is found again on every job by its IDs, so another USB port or a replaced unit of the same model just works; the serial is needed only when several identical printers are connected (`printer_ambiguous` otherwise).
 
 ## HTTP
 
@@ -43,7 +45,7 @@ Every answer, errors included, carries `Access-Control-Allow-Origin: <requesting
 | `printer_not_found` | the configured device or queue is not found | 502 |
 | `printer_ambiguous` | several matching USB devices | 502 |
 | `printer_busy` | the device is held by another program | 502 |
-| `printer_not_responding` | the write did not finish in time | 504 |
+| `printer_not_responding` | the write did not finish in about 10 s | 504 |
 | `print_failed` | any other OS or CUPS error | 502 |
 | `origin_not_allowed` | the page's origin is not in `origins` | 403 |
 | `bad_job` | empty job / larger than 64 KB / not 1 to 10 labels | 400 / 413 / 422 |
