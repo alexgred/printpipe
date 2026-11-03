@@ -1,0 +1,4 @@
+{
+  "port": 8631,
+  "origins": ["http://localhost:3000", "http://localhost:5173"]
+}
