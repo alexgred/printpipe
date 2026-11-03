@@ -22,22 +22,9 @@ import (
 // (each job goes to the file, or to the log with "-").
 func serve(e env) error {
 	path, explicit := e.flags["config"]
-	if !explicit {
-		dir, err := e.sys.ConfigDir()
-		if err != nil {
-			return err
-		}
-		path = config.Path(dir)
-	}
-	cfg := config.Default()
-	switch b, err := e.sys.ReadFile(path); {
-	case errors.Is(err, fs.ErrNotExist) && !explicit:
-	case err != nil:
+	cfg, path, err := loadConfig(e, path, explicit)
+	if err != nil {
 		return err
-	default:
-		if cfg, err = config.Parse(b); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
 	}
 
 	logger := log.New(e.stderr, "", log.LstdFlags)
@@ -52,7 +39,7 @@ func serve(e env) error {
 		return fmt.Errorf("%s: port %d is not 1 to 65535", path, cfg.Port)
 	}
 
-	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(cfg.Port))
+	addr := agentAddr(cfg)
 	l, err := e.sys.Listen(addr)
 	if err != nil {
 		return err
@@ -75,6 +62,35 @@ func serve(e env) error {
 		defer cancel()
 		return srv.Shutdown(ctx)
 	}
+}
+
+// agentAddr is where the agent listens: 127.0.0.1 only.
+func agentAddr(c config.Config) string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.Port))
+}
+
+// loadConfig reads config.json, or the file path when explicit. A missing
+// config.json is the defaults; a missing explicit file is an error. It returns
+// the path it read.
+func loadConfig(e env, path string, explicit bool) (config.Config, string, error) {
+	if !explicit {
+		dir, err := e.sys.ConfigDir()
+		if err != nil {
+			return config.Config{}, "", err
+		}
+		path = config.Path(dir)
+	}
+	cfg := config.Default()
+	switch b, err := e.sys.ReadFile(path); {
+	case errors.Is(err, fs.ErrNotExist) && !explicit:
+	case err != nil:
+		return config.Config{}, path, err
+	default:
+		if cfg, err = config.Parse(b); err != nil {
+			return config.Config{}, path, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return cfg, path, nil
 }
 
 // pick is the printer to print to, and how the log names it.

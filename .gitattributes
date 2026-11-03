@@ -1,0 +1,2 @@
+# Golden TSPL: CP1251 bytes with \r\n, exactly as the printer gets them.
+*.tspl -text

@@ -11,7 +11,10 @@ The same binary is the `printpipe` command and the background agent.
 ```
 printpipe help        list the commands
 printpipe version     print the version (offline)
+printpipe test-print  print the built-in test label through the running agent
 ```
+
+`test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 58×40 mm); `--size W,H` in mm, such as `--size 40,30`, sets another.
 
 `printpipe help` lists the commands of the coming release; the ones not there yet say so. Exit codes: 0 success, 1 any failure, 2 wrong usage.
 
