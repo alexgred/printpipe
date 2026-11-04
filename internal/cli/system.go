@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/alexgred/printpipe/internal/printer"
@@ -73,14 +75,19 @@ func (OS) ReadDir(name string) ([]string, error) {
 // WriteDevice leaves a write that does not finish by the deadline behind: a
 // write to a printer that stopped taking data cannot be interrupted, and it
 // ends when the printer takes the data or goes away.
+//
+// The device is opened with syscall.Open because os.OpenFile makes a device
+// that can be polled non-blocking: usblp then lost the job, with no error, as
+// soon as the file was closed.
 func (OS) WriteDevice(ctx context.Context, path string, job []byte) error {
 	done := make(chan error, 1)
 	go func() {
-		f, err := os.OpenFile(path, os.O_WRONLY, 0)
+		fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_CLOEXEC, 0)
 		if err != nil {
-			done <- err
+			done <- &fs.PathError{Op: "open", Path: path, Err: err}
 			return
 		}
+		f := os.NewFile(uintptr(fd), path)
 		_, err = f.Write(job)
 		if closeErr := f.Close(); err == nil {
 			err = closeErr
