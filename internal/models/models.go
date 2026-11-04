@@ -95,13 +95,18 @@ func UsableQueues(queues []printer.QueueInfo) []printer.QueueInfo {
 	for _, q := range queues {
 		switch {
 		case !q.Accepting || !strings.HasPrefix(q.DeviceURI, "usb://"):
-		case slices.ContainsFunc(known, func(m Model) bool { return m.PrintsTo(q.DeviceURI) }):
+		case PrintsToKnownModel(q.DeviceURI):
 			knownModels = append(knownModels, q)
 		case strings.Contains(strings.ToLower(q.DeviceURI+" "+q.MakeAndModel), "label"):
 			labelPrinters = append(labelPrinters, q)
 		}
 	}
 	return append(knownModels, labelPrinters...)
+}
+
+// PrintsToKnownModel is whether a device URI is that of a model in the list.
+func PrintsToKnownModel(uri string) bool {
+	return slices.ContainsFunc(known, func(m Model) bool { return m.PrintsTo(uri) })
 }
 
 // PrintsTo is whether a device URI is this model's on USB, with any serial:

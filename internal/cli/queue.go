@@ -37,10 +37,8 @@ func install(e env) error {
 		return e.say("Printer: queue %s", cfg.Queue)
 	}
 
-	next := cfg
-	if usable := models.UsableQueues(queues); len(usable) > 0 {
-		next.Queue = usable[0].Name
-	} else if next, err = createQueue(e, cfg, path, queues); err != nil {
+	next, err := chooseQueue(e, cfg, path, queues)
+	if err != nil {
 		return err
 	}
 	if err := saveConfig(e, path, next); err != nil {
@@ -49,14 +47,39 @@ func install(e env) error {
 	return e.say("Printer: queue %s", next.Queue)
 }
 
-// createQueue makes a queue for the known model that is connected, with the
-// one elevation printpipe ever asks for, and returns the configuration with it.
-// Only system commands run as root, never printpipe itself.
-func createQueue(e env, cfg config.Config, path string, queues []printer.QueueInfo) (config.Config, error) {
-	model, err := connectedModel(e)
+// chooseQueue is the configuration with the queue to print to: a known model's
+// that is there, else a new one for a known model that is connected, else a
+// queue that only calls itself a label printer, which may print to anything.
+func chooseQueue(e env, cfg config.Config, path string, queues []printer.QueueInfo) (config.Config, error) {
+	usable := models.UsableQueues(queues)
+	if len(usable) > 0 && models.PrintsToKnownModel(usable[0].DeviceURI) {
+		cfg.Queue = usable[0].Name
+		return cfg, nil
+	}
+	model, connected, err := connectedModel(e)
 	if err != nil {
 		return cfg, err
 	}
+	if connected {
+		return createQueue(e, cfg, path, queues, model)
+	}
+	if len(usable) > 0 {
+		cfg.Queue = usable[0].Name
+		return cfg, nil
+	}
+	return cfg, &failure{
+		msg: "no label printer queue and no known printer found",
+		hints: []string{
+			"Plug the " + models.Default().Name + " in, switch it on and run the same command again.",
+			existingQueueHint,
+		},
+	}
+}
+
+// createQueue makes a queue for the known model that is connected, with the
+// one elevation printpipe ever asks for, and returns the configuration with it.
+// Only system commands run as root, never printpipe itself.
+func createQueue(e env, cfg config.Config, path string, queues []printer.QueueInfo, model models.Model) (config.Config, error) {
 	name := queueName(model.Name, queues, cfg.CreatedQueue)
 	if err := e.say("Creating the printer queue %s; sudo may ask for your computer password.", name); err != nil {
 		return cfg, err
@@ -82,12 +105,13 @@ func createQueue(e env, cfg config.Config, path string, queues []printer.QueueIn
 	return cfg, nil
 }
 
-// connectedModel is the one known printer that is plugged in. It needs no root,
-// so that no password is asked for when there is nothing to create a queue for.
-func connectedModel(e env) (models.Model, error) {
+// connectedModel is the one known printer that is plugged in, false when there
+// is none. It needs no root, so that no password is asked for when there is
+// nothing to create a queue for.
+func connectedModel(e env) (models.Model, bool, error) {
 	usb, err := printer.ListUSB(e.ctx, e.sys)
 	if err != nil {
-		return models.Model{}, fmt.Errorf("could not list the USB printers: %w", err)
+		return models.Model{}, false, fmt.Errorf("could not list the USB printers: %w", err)
 	}
 	var found []models.Model
 	for _, p := range usb {
@@ -97,17 +121,11 @@ func connectedModel(e env) (models.Model, error) {
 	}
 	switch len(found) {
 	case 0:
+		return models.Model{}, false, nil
 	case 1:
-		return found[0], nil
+		return found[0], true, nil
 	default:
-		return models.Model{}, severalConnected(len(found), found[0])
-	}
-	return models.Model{}, &failure{
-		msg: "no label printer queue and no known printer found",
-		hints: []string{
-			"Plug the " + models.Default().Name + " in, switch it on and run the same command again.",
-			existingQueueHint,
-		},
+		return models.Model{}, false, severalConnected(len(found), found[0])
 	}
 }
 

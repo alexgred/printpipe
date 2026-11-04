@@ -164,6 +164,39 @@ func TestInstallAsksForNoPasswordWhenAQueueIsThereOrChosen(t *testing.T) {
 	}
 }
 
+// A queue that only calls itself a label printer may print to anything, so it is
+// taken only when no known model could have a queue instead.
+func TestInstallPrefersAConnectedKnownModelToAQueueThatOnlyLooksLikeALabelPrinter(t *testing.T) {
+	label := func() map[string]string {
+		return map[string]string{"shop": "device-uri=usb://ACME/P1 printer-is-accepting-jobs=true printer-make-and-model='ACME Label Printer'"}
+	}
+
+	t.Run("the known model is plugged in", func(t *testing.T) {
+		sys := newFakeSystem()
+		cupsComputer(sys, label(), "direct usb://ACME/P1\ndirect "+xpURI+"\n")
+		if got := run(t, sys, "install"); got.code != 0 {
+			t.Fatalf("got %+v, want exit 0", got)
+		}
+		if cfg := savedConfig(t, sys); cfg.Queue != "XP-365B" || cfg.CreatedQueue != "XP-365B" {
+			t.Errorf("config has queue %q and created queue %q, want both XP-365B", cfg.Queue, cfg.CreatedQueue)
+		}
+	})
+
+	t.Run("no known model is plugged in", func(t *testing.T) {
+		sys := newFakeSystem()
+		cups(sys, label(), "")
+		if got := run(t, sys, "install"); got.code != 0 {
+			t.Fatalf("got %+v, want exit 0", got)
+		}
+		if cfg := savedConfig(t, sys); cfg.Queue != "shop" || cfg.CreatedQueue != "" {
+			t.Errorf("config has queue %q and created queue %q, want shop and none", cfg.Queue, cfg.CreatedQueue)
+		}
+		if commands := sudoCommands(sys); len(commands) != 0 {
+			t.Errorf("ran as root %q, want nothing", commands)
+		}
+	})
+}
+
 func TestInstallRunTwiceCreatesOneQueue(t *testing.T) {
 	sys := newFakeSystem()
 	cupsComputer(sys, map[string]string{}, "direct "+xpURI+"\n")
