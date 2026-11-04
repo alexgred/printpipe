@@ -87,7 +87,9 @@ func TestInstallCreatesAQueueForAKnownModelWithSystemCommandsOnlyAsRoot(t *testi
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
 			sys := newFakeSystem()
-			sys.goos = goos
+			if goos == "darwin" {
+				sys, _ = onMac()
+			}
 			cupsComputer(sys, map[string]string{}, "direct usb://HP/LaserJet?serial=9\ndirect "+xpURI+"\n")
 			var ppdAtCreation []byte
 			var ppdPath string
@@ -100,7 +102,7 @@ func TestInstallCreatesAQueueForAKnownModelWithSystemCommandsOnlyAsRoot(t *testi
 				return lpadmin(args)
 			}
 
-			got := run(t, sys, "install")
+			got := runInstall(t, sys)
 
 			if got.code != 0 {
 				t.Fatalf("got %+v, want exit 0", got)
@@ -149,7 +151,7 @@ func TestInstallAsksForNoPasswordWhenAQueueIsThereOrChosen(t *testing.T) {
 			files, _ := filesOf(sys)
 			sys.files[files.Config] = []byte(tc.config)
 
-			got := run(t, sys, "install")
+			got := runInstall(t, sys)
 
 			if got.code != 0 {
 				t.Fatalf("got %+v, want exit 0", got)
@@ -174,7 +176,7 @@ func TestInstallPrefersAConnectedKnownModelToAQueueThatOnlyLooksLikeALabelPrinte
 	t.Run("the known model is plugged in", func(t *testing.T) {
 		sys := newFakeSystem()
 		cupsComputer(sys, label(), "direct usb://ACME/P1\ndirect "+xpURI+"\n")
-		if got := run(t, sys, "install"); got.code != 0 {
+		if got := runInstall(t, sys); got.code != 0 {
 			t.Fatalf("got %+v, want exit 0", got)
 		}
 		if cfg := savedConfig(t, sys); cfg.Queue != "XP-365B" || cfg.CreatedQueue != "XP-365B" {
@@ -185,7 +187,7 @@ func TestInstallPrefersAConnectedKnownModelToAQueueThatOnlyLooksLikeALabelPrinte
 	t.Run("no known model is plugged in", func(t *testing.T) {
 		sys := newFakeSystem()
 		cups(sys, label(), "")
-		if got := run(t, sys, "install"); got.code != 0 {
+		if got := runInstall(t, sys); got.code != 0 {
 			t.Fatalf("got %+v, want exit 0", got)
 		}
 		if cfg := savedConfig(t, sys); cfg.Queue != "shop" || cfg.CreatedQueue != "" {
@@ -200,12 +202,12 @@ func TestInstallPrefersAConnectedKnownModelToAQueueThatOnlyLooksLikeALabelPrinte
 func TestInstallRunTwiceCreatesOneQueue(t *testing.T) {
 	sys := newFakeSystem()
 	cupsComputer(sys, map[string]string{}, "direct "+xpURI+"\n")
-	if got := run(t, sys, "install"); got.code != 0 {
+	if got := runInstall(t, sys); got.code != 0 {
 		t.Fatalf("first run: %+v", got)
 	}
 	created := len(sudoCommands(sys))
 
-	got := run(t, sys, "install")
+	got := runInstall(t, sys)
 
 	if got.code != 0 || len(sudoCommands(sys)) != created {
 		t.Errorf("second run: %+v, ran as root %q; want no more than the first run's", got, sudoCommands(sys))
@@ -222,7 +224,7 @@ func TestInstallLeavesAQueueOfTheUsersWithTheSameNameAlone(t *testing.T) {
 	sys := newFakeSystem()
 	cupsComputer(sys, map[string]string{"xp-365b": stopped, "XP-365B-2": "device-uri=ipp://office.local printer-is-accepting-jobs=true"}, "direct "+xpURI+"\n")
 
-	got := run(t, sys, "install")
+	got := runInstall(t, sys)
 
 	if got.code != 0 {
 		t.Fatalf("got %+v, want exit 0", got)
@@ -240,7 +242,7 @@ func TestInstallRepairsAQueueItCreatedThatStoppedTakingJobs(t *testing.T) {
 	files, _ := filesOf(sys)
 	sys.files[files.Config] = []byte(`{"created_queue": "XP-365B"}`)
 
-	if got := run(t, sys, "install"); got.code != 0 {
+	if got := runInstall(t, sys); got.code != 0 {
 		t.Fatalf("got %+v, want exit 0", got)
 	}
 	if cfg := savedConfig(t, sys); cfg.Queue != "XP-365B" || cfg.CreatedQueue != "XP-365B" {
@@ -256,7 +258,7 @@ func TestInstallRepairsTheQueueItCreatedEvenWhenTheBaseNameIsFree(t *testing.T) 
 	files, _ := filesOf(sys)
 	sys.files[files.Config] = []byte(`{"created_queue": "XP-365B-2"}`)
 
-	if got := run(t, sys, "install"); got.code != 0 {
+	if got := runInstall(t, sys); got.code != 0 {
 		t.Fatalf("got %+v, want exit 0", got)
 	}
 	if cfg := savedConfig(t, sys); cfg.Queue != "XP-365B-2" || cfg.CreatedQueue != "XP-365B-2" {
@@ -273,11 +275,11 @@ func TestInstallWithTwoOfTheModelPluggedInAsksForNoPassword(t *testing.T) {
 	sys.files[d+"1-8/idProduct"] = []byte("2016\n")
 	sys.files[d+"1-8:1.0/bInterfaceClass"] = []byte("07\n")
 
-	got := run(t, sys, "install")
+	got := runInstall(t, sys)
 
 	want := "error: 2 XP-365B printers are connected\n" +
-		"  Leave one plugged in and run the same command again.\n" +
-		"  An existing queue: printpipe config --queue <name>\n"
+		"  printpipe install --device usb:1FC9:2016:0020426981AA\n" +
+		"  A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again.\n"
 	if got.code != 1 || got.stderr != want {
 		t.Errorf("got %+v, want exit 1 and\n%s", got, want)
 	}
@@ -319,7 +321,7 @@ func TestInstallFailingToCreateAQueueSaysWhatToDo(t *testing.T) {
 				return sudo(args)
 			}
 
-			got := run(t, sys, "install")
+			got := runInstall(t, sys)
 
 			if got.code != 1 || got.stderr != tc.want {
 				t.Errorf("got %+v, want exit 1 and\n%s", got, tc.want)
@@ -337,7 +339,7 @@ func TestInstallFailingToCreateAQueueSaysWhatToDo(t *testing.T) {
 }
 
 func TestInstallWithoutCUPSSaysToInstallIt(t *testing.T) {
-	got := run(t, newFakeSystem(), "install")
+	got := runInstall(t, newFakeSystem())
 	want := "error: CUPS is not installed (lpadmin not found)\n  Install CUPS and run the same command again.\n"
 	if got.code != 1 || got.stderr != want {
 		t.Errorf("got %+v, want exit 1 and\n%s", got, want)
@@ -349,7 +351,7 @@ func TestInstallWithTheSchedulerDownCreatesNoQueue(t *testing.T) {
 	cupsComputer(sys, map[string]string{}, "direct "+xpURI+"\n")
 	sys.programs["lpstat"] = func([]string) ([]byte, error) { return []byte("scheduler is not running\n"), nil }
 
-	got := run(t, sys, "install")
+	got := runInstall(t, sys)
 
 	if got.code != 1 || !strings.Contains(got.stderr, "scheduler is not running") {
 		t.Errorf("got %+v, want exit 1 and the scheduler named", got)
@@ -377,7 +379,7 @@ func TestInstallWithNoQueueAndNoKnownModelAsksForNoPassword(t *testing.T) {
 			}
 			cups(sys, map[string]string{}, "")
 
-			got := run(t, sys, "install")
+			got := runInstall(t, sys)
 
 			want := "error: no label printer queue and no known printer found\n" +
 				"  Plug the XP-365B in, switch it on and run the same command again.\n" +
@@ -401,13 +403,13 @@ func TestInstallCreatesNoQueueWhenCUPSDoesNotPointAtOnePrinter(t *testing.T) {
 		{"CUPS does not list it", "direct usb://HP/LaserJet?serial=9\n",
 			"error: CUPS does not list the connected XP-365B\n  Switch the printer off and on and run the same command again.\n" + existing},
 		{"two of the model", "direct " + xpURI + "\ndirect usb://Xprinter/XP-365B?serial=2\n",
-			"error: 2 XP-365B printers are connected\n  Leave one plugged in and run the same command again.\n" + existing},
+			"error: 2 XP-365B printers are connected\n  printpipe install --device usb:1FC9:2016:0020426981AA\n  printpipe install --device usb:1FC9:2016:2\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sys := newFakeSystem()
 			cupsComputer(sys, map[string]string{}, tc.lpinfo)
 
-			got := run(t, sys, "install")
+			got := runInstall(t, sys)
 
 			if got.code != 1 || got.stderr != tc.want {
 				t.Errorf("got %+v, want exit 1 and\n%s", got, tc.want)

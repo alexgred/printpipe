@@ -62,3 +62,8 @@ func (OS) StopRequests() (<-chan struct{}, error) { return nil, nil }
 func (OS) HasRunValue(string) bool          { return false }
 func (OS) SetRunValue(string, string) error { return errors.ErrUnsupported }
 func (OS) DeleteRunValue(string) error      { return errors.ErrUnsupported }
+
+// Only Windows keeps the user's Path in its registry.
+
+func (OS) UserPath() (string, error) { return "", errors.ErrUnsupported }
+func (OS) SetUserPath(string) error  { return errors.ErrUnsupported }

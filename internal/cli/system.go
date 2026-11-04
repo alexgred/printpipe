@@ -39,6 +39,8 @@ type System interface {
 	Executable() (string, error)
 	// WriteFile replaces a file, creating its folder.
 	WriteFile(name string, data []byte) error
+	// WriteProgram is WriteFile for a file that is to be run.
+	WriteProgram(name string, data []byte) error
 	Remove(name string) error
 	// Rename moves a file, replacing what is at to.
 	Rename(from, to string) error
@@ -64,6 +66,13 @@ type System interface {
 	HasRunValue(name string) bool
 	SetRunValue(name, command string) error
 	DeleteRunValue(name string) error
+	// PathEnv is this process's PATH.
+	PathEnv() string
+	// UserPath and SetUserPath are the Path in the user's HKCU Environment key,
+	// as it is written there, %VARIABLES% unexpanded. They are asked for on
+	// Windows only. A Path that is not there is empty.
+	UserPath() (string, error)
+	SetUserPath(value string) error
 	Sleep(d time.Duration)
 	// Listen opens the server's TCP listener on addr.
 	Listen(addr string) (net.Listener, error)
@@ -91,6 +100,7 @@ func (OS) Listen(addr string) (net.Listener, error)     { return net.Listen("tcp
 func (OS) Do(req *http.Request) (*http.Response, error) { return client.Do(req) }
 func (OS) Now() time.Time                               { return time.Now() }
 func (OS) Sleep(d time.Duration)                        { time.Sleep(d) }
+func (OS) PathEnv() string                              { return os.Getenv("PATH") }
 
 func (OS) Kill(pid int) error {
 	p, err := os.FindProcess(pid)
@@ -106,6 +116,18 @@ func (OS) WriteFile(name string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(name, data, 0o644)
+}
+
+// WriteProgram also makes a file left by an earlier try runnable, whatever mode
+// it has.
+func (OS) WriteProgram(name string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(name, data, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(name, 0o755)
 }
 
 func (OS) OpenAppend(name string) (io.WriteCloser, int64, error) {

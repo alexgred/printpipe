@@ -79,6 +79,17 @@ type fakeSystem struct {
 	// stopRequestsErr why it cannot be.
 	stopRequests    chan struct{}
 	stopRequestsErr error
+	// pathEnv is the PATH of this process; userPath is the user's Path in HKCU,
+	// and userPathErr what changing it fails with.
+	pathEnv     string
+	userPath    string
+	userPathErr error
+	// installedPrograms is each file written as a program, runnable.
+	installedPrograms []string
+	// removeErr is what removing a file fails with, by its path.
+	removeErr map[string]error
+	// renameErr is what a rename to a path fails with once, by that path.
+	renameErr map[string]error
 }
 
 // ranProgram is one program the CLI ran.
@@ -102,6 +113,8 @@ func newFakeSystem() *fakeSystem {
 		written:    map[string][]byte{},
 		exes:       map[int]string{},
 		runValues:  map[string]string{},
+		pathEnv:    "/usr/bin:/home/me/.local/bin",
+		renameErr:  map[string]error{},
 	}
 }
 
@@ -152,7 +165,28 @@ func (s *fakeSystem) WriteFile(name string, data []byte) error {
 	return nil
 }
 
+func (s *fakeSystem) WriteProgram(name string, data []byte) error {
+	s.files[name] = data
+	s.installedPrograms = append(s.installedPrograms, name)
+	return nil
+}
+
+func (s *fakeSystem) PathEnv() string { return s.pathEnv }
+
+func (s *fakeSystem) UserPath() (string, error) { return s.userPath, nil }
+
+func (s *fakeSystem) SetUserPath(value string) error {
+	if s.userPathErr != nil {
+		return s.userPathErr
+	}
+	s.userPath = value
+	return nil
+}
+
 func (s *fakeSystem) Remove(name string) error {
+	if err := s.removeErr[name]; err != nil {
+		return err
+	}
 	if _, ok := s.files[name]; !ok {
 		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrNotExist}
 	}
@@ -165,8 +199,18 @@ func (s *fakeSystem) Rename(from, to string) error {
 	if !ok {
 		return &fs.PathError{Op: "rename", Path: from, Err: fs.ErrNotExist}
 	}
+	if err := s.renameErr[to]; err != nil {
+		delete(s.renameErr, to)
+		return err
+	}
 	s.files[to] = b
 	delete(s.files, from)
+	// A running program goes on running under its file's new name.
+	for pid, exe := range s.exes {
+		if exe == from {
+			s.exes[pid] = to
+		}
+	}
 	return nil
 }
 
@@ -307,15 +351,19 @@ func (p *fakePrinter) Print(_ context.Context, job []byte) error {
 }
 
 // runAgent makes a printpipe agent answer on the port config.json names now,
-// and keep it until it runs again, allowing origins and printing to p.
+// and keep it until it runs again, printing to p. It allows origins, or without
+// any those config.json names, as a real agent does.
 func (s *fakeSystem) runAgent(p *fakePrinter, origins ...string) {
-	s.onPort = server.Handler(server.Options{Version: "dev", PID: 4242, Origins: origins}, p)
 	s.agentPort = strconv.Itoa(config.DefaultPort)
 	if files, err := filesOf(s); err == nil {
 		if cfg, err := config.Parse(s.files[files.Config]); err == nil {
 			s.agentPort = strconv.Itoa(cfg.Port)
+			if len(origins) == 0 {
+				origins = cfg.Origins
+			}
 		}
 	}
+	s.onPort = server.Handler(server.Options{Version: "dev", PID: 4242, Origins: origins}, p)
 }
 
 // runForeignProgram makes another program answer on the port.

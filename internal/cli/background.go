@@ -88,6 +88,10 @@ type service interface {
 	setStartup(e env, on bool) error
 	// startsAtLogin is whether starting at login is on.
 	startsAtLogin(e env) bool
+	// refreshStartup makes what starts the agent at login, if anything does, run
+	// the installed program, leaving on or off as it is. What start writes anyway
+	// is not its business.
+	refreshStartup(e env) error
 }
 
 // agentWaitSeconds is how long a command waits for the agent to come up or go.
@@ -281,17 +285,47 @@ func checkOwnAgent(e env, port, pid int) error {
 	if err != nil {
 		return err
 	}
-	same := func(a, b string) bool { return a == b }
-	if e.sys.GOOS() == "windows" {
-		same = strings.EqualFold
-	}
-	if !same(exe, own) && !same(exe, files.Binary) {
+	// An agent whose binary was replaced while it ran shows the name its file was
+	// moved to.
+	goos := e.sys.GOOS()
+	if !samePath(goos, exe, own) && !samePath(goos, exe, files.Binary) && !samePath(goos, exe, files.OldBinary) {
 		return &failure{
 			msg:   fmt.Sprintf("process %d on port %d runs %s, not this printpipe", pid, port, exe),
 			hints: []string{"Close that program and run the same command again."},
 		}
 	}
 	return nil
+}
+
+// samePath is whether two paths name one file, by the OS's rule for case.
+func samePath(goos, a, b string) bool {
+	if goos == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// installedProgram is the binary that what runs by itself later is to run: unlike
+// a downloaded copy, it stays where it is. A copy with nothing installed fails
+// here, or the manager or the next login would find no program, and say nothing.
+func installedProgram(sys System) (string, error) {
+	files, err := filesOf(sys)
+	if err != nil {
+		return "", err
+	}
+	exe, err := sys.Executable()
+	if err != nil {
+		return "", err
+	}
+	if !samePath(sys.GOOS(), exe, files.Binary) {
+		if _, err := sys.ReadFile(files.Binary); errors.Is(err, fs.ErrNotExist) {
+			return "", &failure{
+				msg:   "printpipe is not installed, and only what is installed starts by itself",
+				hints: []string{"Install it: printpipe install --origin <url>"},
+			}
+		}
+	}
+	return files.Binary, nil
 }
 
 // terminate asks the agent with this pid to exit, once it shows to be printpipe.
@@ -365,11 +399,11 @@ func (systemd) systemctl(e env, args ...string) ([]byte, error) {
 	return e.sys.Run(e.ctx, nil, "systemctl", append([]string{"--user"}, args...)...)
 }
 
-// writeUnit makes the unit run this program. The agent's output goes nowhere:
-// it keeps its own log, not the journal. Exit 1 is a config it cannot work
-// with or a taken port, and trying again every few seconds fixes neither.
+// writeUnit makes the unit run the installed program. The agent's output goes
+// nowhere: it keeps its own log, not the journal. Exit 1 is a config it cannot
+// work with or a taken port, and trying again every few seconds fixes neither.
 func (d systemd) writeUnit(e env) error {
-	exe, err := e.sys.Executable()
+	exe, err := installedProgram(e.sys)
 	if err != nil {
 		return err
 	}
@@ -471,13 +505,17 @@ func (d systemd) startsAtLogin(e env) bool {
 	return strings.TrimSpace(string(out)) == "enabled" || hasAutostart(e)
 }
 
+// refreshStartup leaves the unit to start, and sees to an autostart entry from
+// when there was no manager.
+func (systemd) refreshStartup(e env) error { return detached{}.refreshStartup(e) }
+
 // detached is a computer without a user manager: the agent is a child in its
 // own session, found again by its port, and an XDG autostart entry starts it
 // at login.
 type detached struct{}
 
 func (detached) start(e env) error {
-	exe, err := e.sys.Executable()
+	exe, err := e.agentProgram()
 	if err != nil {
 		return err
 	}
@@ -498,7 +536,7 @@ func (detached) setStartup(e env, on bool) error {
 	if !on {
 		return removeAutostart(e)
 	}
-	exe, err := e.sys.Executable()
+	exe, err := installedProgram(e.sys)
 	if err != nil {
 		return err
 	}
@@ -515,6 +553,13 @@ func (detached) setStartup(e env, on bool) error {
 }
 
 func (detached) startsAtLogin(e env) bool { return hasAutostart(e) }
+
+func (d detached) refreshStartup(e env) error {
+	if !hasAutostart(e) {
+		return nil
+	}
+	return d.setStartup(e, true)
+}
 
 // windows is a PC with Windows: the agent is a process with no console, found
 // again by its port.
@@ -561,7 +606,7 @@ func (windows) setStartup(e env, on bool) error {
 		}
 		return nil
 	}
-	exe, err := e.sys.Executable()
+	exe, err := installedProgram(e.sys)
 	if err != nil {
 		return err
 	}
@@ -569,6 +614,13 @@ func (windows) setStartup(e env, on bool) error {
 }
 
 func (windows) startsAtLogin(e env) bool { return e.sys.HasRunValue(runValue) }
+
+func (w windows) refreshStartup(e env) error {
+	if !w.startsAtLogin(e) {
+		return nil
+	}
+	return w.setStartup(e, true)
+}
 
 // launchd is the Mac's user session manager, which owns the agent as a service.
 type launchd struct{}
@@ -593,12 +645,12 @@ func (launchd) plistFile(e env) (string, error) {
 	return path.Join(dir, "printpipe", launchdLabel+".plist"), nil
 }
 
-// plist makes the service run this program. The agent's output goes nowhere: it
-// keeps its own log. launchd cannot tell one failing exit from another, so it
+// plist makes the service run the installed program. The agent's output goes
+// nowhere: it keeps its own log. launchd cannot tell one failing exit from another, so it
 // also runs again, every 10 s, an agent that exits with 1; what stops that is
 // taking the service out of launchd, which stop does.
 func (launchd) plist(e env) ([]byte, error) {
-	exe, err := e.sys.Executable()
+	exe, err := installedProgram(e.sys)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +758,7 @@ func (l launchd) start(e env) error {
 	if err != nil {
 		return err
 	}
-	exe, err := e.sys.Executable()
+	exe, err := installedProgram(e.sys)
 	if err != nil {
 		return err
 	}
@@ -777,6 +829,10 @@ func (l launchd) setStartup(e env, on bool) error {
 	}
 	return e.sys.WriteFile(login, plist)
 }
+
+// start writes the plist and its copy in LaunchAgents, and must see for itself
+// that the plist changed, so that launchd reads it again.
+func (launchd) refreshStartup(env) error { return nil }
 
 func (l launchd) startsAtLogin(e env) bool {
 	login, err := l.loginPlist(e)

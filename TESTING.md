@@ -35,7 +35,7 @@ On Fedora as an ordinary user not in the `lp` group, an XP-365B on USB with a 58
 4. After joining the `lp` group: the same config prints the test label.
 5. `"device": "/dev/usb/lp9"`: `test-print` says `the printer was not found`.
 6. Still as in step 4, open the cover or take out the roll and send labels until the printer stops taking data: within about 10 s `test-print` says `the printer did not respond`, and the agent keeps answering.
-7. Finding printers (nothing calls it until `install`): `printer.ListUSB` names `1FC9:2016 "Xprinter XP-365B"` and `models.UsableQueues` lists the queue, both without root.
+7. Finding printers: `printer.ListUSB` names `1FC9:2016 "Xprinter XP-365B"` and `models.UsableQueues` lists the queue, both without root.
 
 8. `"queue": "XP-365B"` with `CUPS_SERVER=127.0.0.1:1` set for `serve` (as if the scheduler were down): `test-print` says `printing failed` and `the CUPS scheduler is not running`, not that the printer was not found.
 
@@ -48,20 +48,40 @@ Not verified yet: what `lpstat -e` does on a computer with no queue at all; whet
 
 ## Linux: creating a CUPS queue
 
-On Fedora as an ordinary user, an XP-365B on USB, sudo rights, and no `config.json`. So far `install` does only its printer step, so nothing starts and no label is printed: use `lpstat -e` and `lpoptions -p <queue>`, then `printpipe serve` and `test-print` as above.
+On Fedora as an ordinary user, an XP-365B on USB, sudo rights, and no `config.json`. Use `lpstat -e` and `lpoptions -p <queue>` to look; `<o>` below is `--origin https://app.example`, needed until `config.json` has an origin.
 
-1. With no queue for the printer, and if possible none at all (this also settles what `lpstat -e` does then): `printpipe install` says why it may ask, asks for the password once, and says `Printer: queue XP-365B`. `config.json` has `"queue"` and `"created_queue"`, no `.ppd` file is left beside it, `lpoptions -p XP-365B` has the printer's `device-uri` and `printer-is-shared=false`, and `ps` during the prompt shows `sudo` running `lpinfo`, not printpipe.
-2. `test-print` through that queue: the label comes out, with the Cyrillic line in Cyrillic.
-3. `printpipe install` again: no password, no new queue.
+1. With no queue for the printer, and if possible none at all (this also settles what `lpstat -e` does then): `printpipe install <o>` says why it may ask, asks for the password once, and says `Printer: queue XP-365B`. `config.json` has `"queue"` and `"created_queue"`, no `.ppd` file is left beside it, `lpoptions -p XP-365B` has the printer's `device-uri` and `printer-is-shared=false`, and `ps` during the prompt shows `sudo` running `lpinfo`, not printpipe.
+2. `install` went on to print the test label through that queue: the label comes out, with the Cyrillic line in Cyrillic.
+3. `printpipe install` again: no password, no new queue, `Agent restarted`.
 4. `sudo lpadmin -x XP-365B`, `sudo -k`, `printpipe install` and three wrong passwords: `administrator rights were refused`, both hints, and no queue. The same with Ctrl+C at the prompt, and with no terminal (`setsid printpipe install`).
 5. The queue removed and the printer unplugged: `no label printer queue and no known printer found`, with no password asked.
 6. The queue removed, a hand-made one in its place that is not this printer's (`sudo lpadmin -p XP-365B -v ipp://localhost/none -P internal/models/xp-365b.ppd`), the printer plugged in and no `config.json`: `install` creates `XP-365B-2` and leaves the hand-made one alone.
 
+7. With two XP-365B plugged in and no queue: `install` lists `printpipe install --device usb:1FC9:2016:<serial>` for each, with no password asked. Each command, run as printed, makes the queue print to that printer: `lpinfo` must give the same serial in `serial=` as sysfs does.
+
 Not run yet. Not verified yet: `lpinfo` naming the printer `usb://Xprinter/XP-365B` on a computer where the `usblp` driver holds it.
+
+## `install`
+
+On each OS as an ordinary user, with an XP-365B on USB, a browser-downloaded build, nothing installed and nothing else on port 8631. Below `<exe>` is that download and `<o>` is `--origin https://app.example`.
+
+1. `<exe> install <o>` prints one line per step, ending with `To start the agent at login: printpipe startup on`, the label comes out, and the exit code is 0. No UAC prompt on Windows, and a password only if a queue had to be made.
+2. The binary is in its folder, runnable, and `<exe>` can be deleted: `printpipe test-print` from a new terminal prints. Windows: `reg query HKCU\Environment /v Path` has the folder once, other entries and `%VARIABLES%` as they were. macOS/Linux with `~/.local/bin` off `PATH`: the line to add is printed, and no profile changed.
+3. Windows: `Get-Item <installed exe> -Stream *` has no `Zone.Identifier`. `printpipe startup on`, log out and back in: no `Open File - Security Warning`, and the agent runs. `<exe>` itself keeps its stream. macOS: `xattr <installed>` has no `com.apple.quarantine`.
+4. `printpipe install`, from the installed binary with the agent running: `Agent restarted`, a new `pid`, a label. On Windows this also shows that the stream of a running exe can be removed, or not: note which.
+5. A different build's `<exe> install` over the running agent: `Agent restarted`, `printpipe version` names the new build, and `.printpipe.old` is gone. On Windows and with no manager this also checks that the old process is accepted under the name `.printpipe.old`: Windows must report the new name, or the old one, and either passes.
+6. With `startup on`, `<exe> install` from another folder: the unit, plist, entry or `Run` value runs the installed binary, and login still starts it.
+7. Unplug the printer, `printpipe stop`, remove the `queue` or `device` from `config.json`, `install`: an error, exit 1, no agent. Plug it in, run the same command: it works, with the origin kept.
+8. `python3 -m http.server 8631 --bind 127.0.0.1`, then `install`: `port 8631 is used by another program`, exit 1, and the server keeps running.
+9. Break the config so that the agent cannot run (a port below 1024 on Linux): `the agent did not answer within 10 s` and the log path, exit 1.
+10. With the cover open or the printer unplugged after the agent started, where it is noticed: `the test label was not sent`, `The agent is running.`, exit 1, and `/health` answers.
+11. From a copy with nothing installed: `startup on` says `printpipe is not installed`, and writes nothing; so does `start` under systemd or launchd. Without them `start` runs that copy.
+
+Not run yet on any OS.
 
 ## Linux: running in the background
 
-On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/.config/printpipe/config.json` and `printpipe` in `~/.local/bin` (nothing else answering on the port):
+On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/.config/printpipe/config.json` and `printpipe` in `~/.local/bin`, where the unit and the autostart entry expect it (nothing else answering on the port):
 
 1. `printpipe start` says `Agent started, version X`. `systemctl --user status printpipe.service` shows it active, and `~/.config/systemd/user/printpipe.service` runs that binary. A second `start` says `already running, version X`.
 2. Close the terminal and open another: `printpipe test-print` still prints.
@@ -99,7 +119,7 @@ On a Windows 11 PC as an ordinary user (no admin), with a usable `%APPDATA%\prin
 5. `.\printpipe.exe stop` says `Agent stopped` within a few seconds, and the last line of `%LOCALAPPDATA%\printpipe\agent.log` is `asked to stop`: the stop event worked. A second `stop` says `not running`. `restart` now starts it.
 6. The force-kill: a build from before the stop event has none to signal. Build commit `8f9245f` for Windows, copy it to `%LOCALAPPDATA%\Programs\printpipe\printpipe.exe`, and run `serve` with it in one window. From the new build in its own folder, `stop` says `Agent stopped` within a few seconds, that window's `serve` is gone, and the log has no `asked to stop`.
 7. In an `ssh` session, if the PC runs OpenSSH Server: `start` works, and the agent survives closing the session.
-8. `.\printpipe.exe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v printpipe` shows `"<path>\printpipe.exe" start`. Log out and back in: the agent runs, with no window (on a build before 24H2, a short flash is accepted; note what is seen). `startup off` leaves it running, the value is gone, and after another login it does not run. No step asked for UAC.
+8. `.\printpipe.exe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v printpipe` shows `"%LOCALAPPDATA%\Programs\printpipe\printpipe.exe" start` with the folder spelled out, whichever copy ran it: install first, for that file to be there. Log out and back in: the agent runs, with no window (on a build before 24H2, a short flash is accepted; note what is seen). `startup off` leaves it running, the value is gone, and after another login it does not run. No step asked for UAC.
 9. With the agent stopped, `python -m http.server 8631 --bind 127.0.0.1`: `start`, `stop` and `restart` each say `port 8631 is used by another program`, exit 1, and the server keeps running.
 
 Checked without Windows: `make build` gives a console-subsystem binary whose `.rsrc` holds the manifest.
@@ -116,7 +136,7 @@ Not run yet: needs a Mac, before printpipe is used on one. As an ordinary user, 
 2. Close the terminal and open another: `printpipe test-print` still prints.
 3. `printpipe restart` says `Agent restarted, version X`, and right afterwards `/health` answers a new `pid`: `kickstart -k` returning before the old agent has left the port would report the old one.
 4. `printpipe stop` says `Agent stopped`, and `launchctl print` no longer finds the service. A second `stop` says `not running`. `restart` now starts it.
-5. Run `start` from a copy in another folder, then `restart` from `~/.local/bin`: `bootout` right before `bootstrap` does not fail with `Bootstrap failed: 5` (launchd may still be taking the service out), and the agent runs the binary in `~/.local/bin`.
+5. Change the plist by hand so that it differs, then `restart`: `bootout` right before `bootstrap` does not fail with `Bootstrap failed: 5` (launchd may still be taking the service out), and the agent runs the binary in `~/.local/bin`, whichever copy ran `restart`.
 6. `printpipe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and the plist is in `~/Library/LaunchAgents`. Log out and back in: the agent runs. `printpipe stop` then says `Agent stopped`: `bootout` of the plist in Application Support finds the service loaded from LaunchAgents. `startup off` leaves a running agent running, removes the copy, and after another login it does not run. `launchctl print-disabled gui/$UID` does not list the service.
 7. Kill the agent with `kill -SEGV <pid>`: launchd starts it again within about 10 s. Then break the config (remove `queue` and `device`), `stop`, `start`: after 10 s `the agent did not answer within 10 s` and the log path, and the log says `no printer` about every 10 s. `stop` says `not running`, and the lines end. Put the config back, `start`.
 8. With the agent stopped, `printpipe serve` in a terminal, then `printpipe stop` in another: the agent exits, though launchd did not run it. The same with `restart`: launchd runs it afterwards.

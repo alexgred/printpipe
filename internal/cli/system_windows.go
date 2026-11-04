@@ -16,7 +16,19 @@ const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 // it, and either may take the request.
 const stopEvent = `Local\printpipe-stop`
 
+// environmentKey is the key of the user's environment, under HKCU, and
+// pathValue its Path.
 const (
+	environmentKey = `Environment`
+	pathValue      = "Path"
+)
+
+const (
+	hwndBroadcast    = 0xffff
+	wmSettingChange  = 0x001a
+	smtoAbortIfHung  = 0x0002
+	broadcastTimeout = 1000 // ms
+
 	detachedProcess        = 0x00000008
 	createBreakawayFromJob = 0x01000000
 
@@ -34,6 +46,8 @@ var (
 	regCreateKeyEx            = advapi32.NewProc("RegCreateKeyExW")
 	regSetValueEx             = advapi32.NewProc("RegSetValueExW")
 	regDeleteValue            = advapi32.NewProc("RegDeleteValueW")
+	user32                    = syscall.NewLazyDLL("user32.dll")
+	sendMessageTimeout        = user32.NewProc("SendMessageTimeoutW")
 )
 
 // Spawn starts a program with no console, so that closing the terminal does not
@@ -138,7 +152,13 @@ func (OS) HasRunValue(name string) bool {
 }
 
 func (OS) SetRunValue(name, command string) error {
-	key, err := syscall.UTF16PtrFromString(runKey)
+	return setRegistryValue(runKey, name, syscall.REG_SZ, command)
+}
+
+// setRegistryValue writes a string value of a key under HKCU, which a new
+// profile may not have yet.
+func setRegistryValue(keyName, name string, kind uint32, content string) error {
+	key, err := syscall.UTF16PtrFromString(keyName)
 	if err != nil {
 		return err
 	}
@@ -146,7 +166,7 @@ func (OS) SetRunValue(name, command string) error {
 	if err != nil {
 		return err
 	}
-	data, err := syscall.UTF16FromString(command)
+	data, err := syscall.UTF16FromString(content)
 	if err != nil {
 		return err
 	}
@@ -157,9 +177,58 @@ func (OS) SetRunValue(name, command string) error {
 	}
 	defer syscall.RegCloseKey(h)
 	// The size is in bytes, with the closing NUL that UTF16FromString adds.
-	if r, _, _ := regSetValueEx.Call(uintptr(h), uintptr(unsafe.Pointer(value)), 0, syscall.REG_SZ,
+	if r, _, _ := regSetValueEx.Call(uintptr(h), uintptr(unsafe.Pointer(value)), 0, uintptr(kind),
 		uintptr(unsafe.Pointer(&data[0])), uintptr(len(data)*2)); r != 0 {
 		return syscall.Errno(r)
+	}
+	return nil
+}
+
+// UserPath reads the value as it is written: ExpandEnvironmentStrings is what
+// would lose its %VARIABLES% on the way back.
+func (OS) UserPath() (string, error) {
+	key, err := syscall.UTF16PtrFromString(environmentKey)
+	if err != nil {
+		return "", err
+	}
+	value, err := syscall.UTF16PtrFromString(pathValue)
+	if err != nil {
+		return "", err
+	}
+	var h syscall.Handle
+	err = syscall.RegOpenKeyEx(syscall.HKEY_CURRENT_USER, key, 0, syscall.KEY_QUERY_VALUE, &h)
+	if err == syscall.ERROR_FILE_NOT_FOUND {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer syscall.RegCloseKey(h)
+	var size uint32
+	err = syscall.RegQueryValueEx(h, value, nil, nil, nil, &size)
+	if err == syscall.ERROR_FILE_NOT_FOUND || (err == nil && size == 0) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	buf := make([]uint16, size/2+1)
+	if err := syscall.RegQueryValueEx(h, value, nil, nil, (*byte)(unsafe.Pointer(&buf[0])), &size); err != nil {
+		return "", err
+	}
+	return syscall.UTF16ToString(buf), nil
+}
+
+// SetUserPath writes the kind of value Windows gives the user's Path, so that
+// %VARIABLES% in it go on working, and tells running programs: Explorer passes
+// the new Path on to the terminals opened from now on. One that hangs is not
+// waited for, and not being told is no failure.
+func (OS) SetUserPath(content string) error {
+	if err := setRegistryValue(environmentKey, pathValue, syscall.REG_EXPAND_SZ, content); err != nil {
+		return err
+	}
+	if what, err := syscall.UTF16PtrFromString(environmentKey); err == nil {
+		sendMessageTimeout.Call(hwndBroadcast, wmSettingChange, 0, uintptr(unsafe.Pointer(what)), smtoAbortIfHung, broadcastTimeout, 0)
 	}
 	return nil
 }

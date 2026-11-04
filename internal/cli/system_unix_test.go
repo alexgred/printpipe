@@ -4,6 +4,8 @@ package cli
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -21,5 +23,28 @@ func TestLsofProgramIsTheFirstTextFile(t *testing.T) {
 func TestLsofProgramFailsWhenLsofNamesNoFile(t *testing.T) {
 	if got, err := lsofProgram("p4242\n"); !errors.Is(err, errNoProgram) {
 		t.Errorf("got %q, %v", got, err)
+	}
+}
+
+// A file left by a failed try has whatever mode it has; what is written must run.
+func TestWriteProgramMakesARunnableFileOverALeftover(t *testing.T) {
+	name := filepath.Join(t.TempDir(), "bin", ".printpipe.new")
+	for range 2 {
+		if err := (OS{}).WriteProgram(name, []byte("program")); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o100 == 0 {
+			t.Errorf("mode %v, want it runnable", info.Mode())
+		}
+		if err := os.Chmod(name, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := os.ReadFile(name); string(got) != "program" {
+		t.Errorf("the file has %q", got)
 	}
 }

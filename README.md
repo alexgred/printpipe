@@ -4,13 +4,14 @@ A small agent for the computer a label printer is plugged into. Web pages in tha
 
 The same binary is the `printpipe` command and the background agent.
 
-> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux and Windows, and on macOS it has not yet been run on a real Mac.
+> Work in progress: the first release will be v0.2.0. `upgrade`, `remove`, `status` and the download scripts are not there yet; running in the background works on Linux and Windows, and on macOS it has not yet been run on a real Mac.
 
 ## Commands
 
 ```
 printpipe help        list the commands
 printpipe version     print the version (offline)
+printpipe install [flags]   install for this user, find the printer, start and print a test label
 printpipe start       start the agent in the background
 printpipe stop        stop the agent
 printpipe restart     restart the agent, or start it when it is stopped
@@ -19,13 +20,28 @@ printpipe config [flags]    show the configuration, or change it with flags
 printpipe test-print  print the built-in test label through the running agent
 ```
 
+`printpipe install --origin <url>` takes a computer from nothing to a running agent with a printed test label, one line per step, and can be run again at any time:
+
+```
+--origin <url>   add a page allowed to print; needed only when config.json has none
+--queue <name>   print through this queue
+--device <value> print to this device; on macOS and Linux usb:VID:PID[:serial] chooses the printer to make a queue for
+--port <n>       the port
+--size W,H       the test label's size in mm
+--no-test-print  print no test label
+```
+
+It places itself in the binary folder by renames, which works over a running agent, and takes the browser's download mark off the installed file (`Zone.Identifier` on Windows, the quarantine attribute on macOS). On Windows it adds the folder to the user's `Path`; on macOS and Linux it prints the line to add when `~/.local/bin` is not on `PATH`, and edits no profile. It keeps a saved queue or device that is still there, else finds one as below. A running agent is always restarted, and the build that runs `install` is the one installed, even when older. It never turns starting at login on, but keeps what does so pointing at the installed binary. Only that binary starts by itself: `startup on`, and `start` under systemd or launchd, from a copy with nothing installed say to run `install` first.
+
+When it stops: with no printer the configuration is written and the agent is not started, so that plugging the printer in and running the same command is the fix. Another program on the port is left alone and the agent is not started. A test label that was not sent leaves the agent running. Each exits with 1. With several known printers connected it prints a ready command per printer.
+
 `start` on a running agent and `stop` on a stopped one just say so and succeed. `start` and `startup` are independent: turning starting at login on does not start the agent, and turning it off does not stop it. The agent is found only by its port, through `/health`; if another program answers there, printpipe says so and leaves it alone.
 
-On Linux the agent is the systemd user unit `printpipe.service` in `~/.config/systemd/user/`, which runs the `printpipe` that wrote it: `start`, `stop` and `restart` are `systemctl --user`, and `startup` is `enable` and `disable`. Without a user systemd manager the agent is a detached child that `stop` ends with SIGTERM, once `/proc` shows that the process is printpipe, and starting at login is an entry in `~/.config/autostart/`.
+On Linux the agent is the systemd user unit `printpipe.service` in `~/.config/systemd/user/`, which runs the installed `~/.local/bin/printpipe`, whichever copy wrote it: `start`, `stop` and `restart` are `systemctl --user`, and `startup` is `enable` and `disable`. Without a user systemd manager the agent is a detached child that `stop` ends with SIGTERM, once `/proc` shows that the process is printpipe, and starting at login is an entry in `~/.config/autostart/` that runs the installed binary too.
 
-On macOS launchd owns the agent, as the service `io.github.alexgred.printpipe` in the user's session. Its plist in `~/Library/Application Support/printpipe/` runs the `printpipe` that wrote it: `start` and `stop` are `launchctl bootstrap` and `bootout gui/$UID <plist>`, and `restart` is `kickstart -k`. `startup on` copies the plist to `~/Library/LaunchAgents`, and `startup off` removes the copy. launchd runs a failed agent again every 10 s or so, also one that refuses to run because of its config, until `stop`.
+On macOS launchd owns the agent, as the service `io.github.alexgred.printpipe` in the user's session. Its plist in `~/Library/Application Support/printpipe/` runs the installed `~/.local/bin/printpipe`, whichever copy wrote it: `start` and `stop` are `launchctl bootstrap` and `bootout gui/$UID <plist>`, and `restart` is `kickstart -k`. `startup on` copies the plist to `~/Library/LaunchAgents`, and `startup off` removes the copy. launchd runs a failed agent again every 10 s or so, also one that refuses to run because of its config, until `stop`.
 
-On Windows the agent is a process with no window and no console, which outlives the terminal it was started from. `stop` signals the event `Local\printpipe-stop` for a graceful exit, then ends the process by force, once its program file shows that it is printpipe. `startup on` adds the value `printpipe` to the user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which runs the `printpipe.exe` that wrote it with `start`; none of this needs admin rights. On Windows 11 24H2 and later nothing shows at logon; older builds may flash a console window for a moment.
+On Windows the agent is a process with no window and no console, which outlives the terminal it was started from. `stop` signals the event `Local\printpipe-stop` for a graceful exit, then ends the process by force, once its program file shows that it is printpipe. `startup on` adds the value `printpipe` to the user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which runs the installed `printpipe.exe`, whichever copy wrote it, with `start`; none of this needs admin rights. On Windows 11 24H2 and later nothing shows at logon; older builds may flash a console window for a moment.
 
 `test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 58×40 mm); `--size W,H` in mm, such as `--size 40,30`, sets another.
 
@@ -55,7 +71,7 @@ The settings are in `config.json` in the user's configuration folder (`%APPDATA%
 | `device` | a device instead of a queue: on Windows `usb:VID:PID[:serial]` in hex, such as `usb:1FC9:2016`; on Linux a device file such as `/dev/usb/lp0` |
 | `created_queue` | set by printpipe: the CUPS queue it created, the only one it may delete |
 
-On macOS and Linux printpipe prints through a CUPS queue with `lp -o raw`, so nothing changes the job's bytes. When no usable queue exists and a known model is connected, `install` creates one, asking for your password once: only `lpinfo` and `lpadmin` run through `sudo`, never printpipe, and a queue of yours is never changed. On Linux a `device` without `usb:` is written to directly; that needs membership of the `lp` group (`sudo usermod -aG lp $USER`, then log out and back in).
+On macOS and Linux printpipe prints through a CUPS queue with `lp -o raw`, so nothing changes the job's bytes. When no usable queue exists and a known model is connected, `install` creates one, asking for your password once: only `lpinfo` and `lpadmin` run through `sudo`, never printpipe, and a queue of yours is never changed. With several identical printers connected, `install --device usb:VID:PID:<serial>` chooses the one to use: a queue that already prints to it, or a new one, whose name goes in `queue`; a `usb:` device itself is printed to only on Windows. On Linux a `device` without `usb:` is written to directly; that needs membership of the `lp` group (`sudo usermod -aG lp $USER`, then log out and back in).
 
 On Windows printpipe writes straight to the USB printer, with no driver, no queue and no admin rights. A `usb:` device is found again on every job by its IDs, so another USB port or a replaced unit of the same model just works; the serial is needed only when several identical printers are connected (`printer_ambiguous` otherwise).
 

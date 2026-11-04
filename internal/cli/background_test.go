@@ -22,10 +22,12 @@ type fakeSystemd struct {
 	enabled bool
 	// mainPID is the agent the unit runs, 0 for none.
 	mainPID int
+	// printer is what the unit's agent prints to.
+	printer *fakePrinter
 }
 
 func withSystemd(sys *fakeSystem) *fakeSystemd {
-	d := &fakeSystemd{sys: sys}
+	d := &fakeSystemd{sys: sys, printer: &fakePrinter{}}
 	sys.programs["systemctl"] = d.systemctl
 	return d
 }
@@ -51,7 +53,7 @@ func (d *fakeSystemd) systemctl(args []string) ([]byte, error) {
 	}
 	switch args[1] {
 	case "start", "restart":
-		d.sys.runAgent(&fakePrinter{})
+		d.sys.runAgent(d.printer)
 		d.sys.exes[agentPID] = installedExe
 		d.mainPID = agentPID
 	case "stop":
@@ -127,15 +129,28 @@ func TestStartWritesTheUnitAndStartsIt(t *testing.T) {
 	}
 }
 
-// What start runs is the program that was started, wherever it is.
-func TestTheUnitRunsThisProgramEvenInAFolderWithASpace(t *testing.T) {
+// A downloaded copy may be gone by the next login: what the unit runs stays.
+func TestTheUnitRunsTheInstalledProgramWhicheverCopyWroteIt(t *testing.T) {
 	sys := newFakeSystem()
 	withSystemd(sys)
-	sys.executable = "/home/me/my tools/printpipe"
+	sys.executable = "/home/me/Downloads/printpipe"
+	sys.files[installedExe] = []byte("installed")
+	run(t, sys, "startup", "on")
+
+	if unit := string(sys.files[unitPath]); !strings.Contains(unit, `ExecStart="`+installedExe+`" serve`) {
+		t.Errorf("the unit does not run the installed program:\n%s", unit)
+	}
+}
+
+func TestTheUnitRunsTheInstalledProgramEvenInAFolderWithASpace(t *testing.T) {
+	sys := newFakeSystem()
+	withSystemd(sys)
+	sys.home = "/home/my self"
+	sys.executable = "/home/my self/.local/bin/printpipe"
 	run(t, sys, "start")
 
-	if unit := string(sys.files[unitPath]); !strings.Contains(unit, `ExecStart="/home/me/my tools/printpipe" serve`) {
-		t.Errorf("the unit does not run the program:\n%s", unit)
+	if unit := string(sys.files[unitPath]); !strings.Contains(unit, `ExecStart="/home/my self/.local/bin/printpipe" serve`) {
+		t.Errorf("the unit does not run the installed program:\n%s", unit)
 	}
 }
 
@@ -452,6 +467,8 @@ func TestWithoutAManagerStartupIsAnXDGAutostartEntry(t *testing.T) {
 	sys := noManager()
 
 	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+	sys.executable = "/home/me/Downloads/printpipe"
+	sys.files[installedExe] = []byte("installed")
 	wantOutput(t, run(t, sys, "startup", "on"), "Starts at login: on\n")
 	entry := string(sys.files[autostartPath])
 	for _, want := range []string{"[Desktop Entry]\n", "Type=Application\n", `Exec="` + installedExe + `" start` + "\n"} {
@@ -682,6 +699,8 @@ func TestOnWindowsStartupIsARunValueThatStartsTheAgent(t *testing.T) {
 	sys := onWindows()
 
 	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+	sys.executable = `C:\Users\me\Downloads\printpipe.exe`
+	sys.files[windowsExe] = []byte("installed")
 	wantOutput(t, run(t, sys, "startup", "on"), "Starts at login: on\n")
 	if got, want := sys.runValues["printpipe"], `"`+windowsExe+`" start`; got != want {
 		t.Errorf("the value runs %q, want %q", got, want)
@@ -863,10 +882,11 @@ func TestOnMacOSStartWritesThePlistAndBootstrapsIt(t *testing.T) {
 // A path is text in XML: a folder with an & would make launchd refuse the plist.
 func TestOnMacOSThePlistEscapesTheProgramPath(t *testing.T) {
 	sys, _ := onMac()
-	sys.executable = "/Users/me/Tom & Jerry/printpipe"
+	sys.home = "/Users/Tom & Jerry"
+	sys.executable = "/Users/Tom & Jerry/.local/bin/printpipe"
 	run(t, sys, "start")
 
-	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>/Users/me/Tom &amp; Jerry/printpipe</string>") {
+	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>/Users/Tom &amp; Jerry/.local/bin/printpipe</string>") {
 		t.Errorf("the path is not escaped:\n%s", plist)
 	}
 }
@@ -895,7 +915,7 @@ func TestOnMacOSStartReloadsAServiceWhosePlistChanged(t *testing.T) {
 	sys, l := onMac()
 	l.runService()
 	l.agentExits()
-	sys.executable = "/Users/me/Downloads/printpipe"
+	sys.files[plistPath] = []byte("an older plist")
 
 	wantOutput(t, run(t, sys, "start"), "Agent started, version dev\n")
 	wantRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
@@ -1002,32 +1022,34 @@ func TestOnMacOSRestartOnAStoppedAgentStartsIt(t *testing.T) {
 	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
 }
 
-// As on Linux, what runs afterwards is the program that was asked to restart.
+// As on Linux, what runs afterwards is the installed program, whichever copy
+// was asked to restart.
 func TestOnMacOSRestartReloadsAServiceWhosePlistChanged(t *testing.T) {
 	sys, l := onMac()
 	l.runService()
+	sys.files[plistPath] = []byte("an older plist")
+	sys.files[macExe] = []byte("installed")
 	sys.executable = "/Users/me/Downloads/printpipe"
 
 	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
 	wantRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
 	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
-	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>/Users/me/Downloads/printpipe</string>") {
-		t.Errorf("the plist does not run the program:\n%s", plist)
+	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>"+macExe+"</string>") {
+		t.Errorf("the plist does not run the installed program:\n%s", plist)
 	}
 }
 
 // The plist on disk says nothing of what launchd loaded: startup on has already
 // written the new one, and kickstart would run the old program again.
-func TestOnMacOSRestartAfterStartupFromAnotherCopyRunsThatCopy(t *testing.T) {
+func TestOnMacOSRestartAfterStartupMovesAServiceOffAnotherProgram(t *testing.T) {
 	sys, l := onMac()
 	l.runService()
-	sys.executable = "/Users/me/Downloads/printpipe"
-	sys.exes[agentPID] = sys.executable
+	l.program = "/Users/me/Downloads/printpipe"
 
 	run(t, sys, "startup", "on")
 	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
-	if l.program != sys.executable {
-		t.Errorf("launchd runs %q, want %q", l.program, sys.executable)
+	if l.program != macExe {
+		t.Errorf("launchd runs %q, want %q", l.program, macExe)
 	}
 }
 
@@ -1096,10 +1118,10 @@ func TestOnMacOSStartupOffWithNoCopySucceeds(t *testing.T) {
 func TestOnMacOSAChangedPlistAlsoChangesTheCopyInLaunchAgents(t *testing.T) {
 	sys, _ := onMac()
 	run(t, sys, "startup", "on")
-	sys.executable = "/Users/me/Downloads/printpipe"
+	sys.files[loginPlistPath] = []byte("an older plist")
 
 	run(t, sys, "start")
-	if got, want := string(sys.files[loginPlistPath]), string(plistOf(sys.executable)); got != want {
+	if got, want := string(sys.files[loginPlistPath]), string(plistOf(macExe)); got != want {
 		t.Errorf("LaunchAgents has\n%s\nwant\n%s", got, want)
 	}
 }
@@ -1108,7 +1130,7 @@ func TestOnMacOSAChangedPlistAlsoChangesTheCopyInLaunchAgents(t *testing.T) {
 func TestOnMacOSAChangedPlistMakesNoCopyWhenStartupIsOff(t *testing.T) {
 	sys, l := onMac()
 	l.runService()
-	sys.executable = "/Users/me/Downloads/printpipe"
+	sys.files[plistPath] = []byte("an older plist")
 
 	run(t, sys, "restart")
 	if _, wrote := sys.files[loginPlistPath]; wrote {

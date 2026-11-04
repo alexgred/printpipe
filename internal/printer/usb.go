@@ -78,9 +78,9 @@ type USBPrinter struct {
 	path string
 }
 
-// matches is whether the printer p is one the device id names: the same IDs,
+// Matches is whether the printer p is one the device id names: the same IDs,
 // and the same serial when id has one.
-func (id USBID) matches(p USBID) bool {
+func (id USBID) Matches(p USBID) bool {
 	return p.VID == id.VID && p.PID == id.PID && (id.Serial == "" || strings.EqualFold(p.Serial, id.Serial))
 }
 
@@ -153,7 +153,7 @@ func (u USB) Print(ctx context.Context, job []byte) error {
 	}
 	var match []USBPrinter
 	for _, p := range printers {
-		if u.ID.matches(p.USBID) {
+		if u.ID.Matches(p.USBID) {
 			match = append(match, p)
 		}
 	}

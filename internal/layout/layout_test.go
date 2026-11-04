@@ -13,6 +13,10 @@ func TestPathsPerOS(t *testing.T) {
 				Binary: "/home/me/.local/bin/printpipe",
 				Config: "/home/me/.config/printpipe/config.json",
 				Log:    "/home/me/.local/state/printpipe/agent.log",
+
+				BinaryDir: "/home/me/.local/bin",
+				NewBinary: "/home/me/.local/bin/.printpipe.new",
+				OldBinary: "/home/me/.local/bin/.printpipe.old",
 			},
 		},
 		{
@@ -21,6 +25,10 @@ func TestPathsPerOS(t *testing.T) {
 				Binary: "/Users/me/.local/bin/printpipe",
 				Config: "/Users/me/Library/Application Support/printpipe/config.json",
 				Log:    "/Users/me/Library/Logs/printpipe.log",
+
+				BinaryDir: "/Users/me/.local/bin",
+				NewBinary: "/Users/me/.local/bin/.printpipe.new",
+				OldBinary: "/Users/me/.local/bin/.printpipe.old",
 			},
 		},
 		{
@@ -29,6 +37,10 @@ func TestPathsPerOS(t *testing.T) {
 				Binary: `C:\Users\me\AppData\Local\Programs\printpipe\printpipe.exe`,
 				Config: `C:\Users\me\AppData\Roaming\printpipe\config.json`,
 				Log:    `C:\Users\me\AppData\Local\printpipe\agent.log`,
+
+				BinaryDir: `C:\Users\me\AppData\Local\Programs\printpipe`,
+				NewBinary: `C:\Users\me\AppData\Local\Programs\printpipe\.printpipe.new`,
+				OldBinary: `C:\Users\me\AppData\Local\Programs\printpipe\.printpipe.old`,
 			},
 		},
 	} {

@@ -20,11 +20,9 @@ func testPrint(e env) error {
 	if err != nil {
 		return err
 	}
-	size := labelSize(cfg)
-	if s, ok := e.flags["size"]; ok {
-		if size, err = testlabel.ParseSize(s); err != nil {
-			return usageError("--size " + err.Error())
-		}
+	size, err := testLabelSize(e, cfg)
+	if err != nil {
+		return err
 	}
 	agent, err := findAgent(e, cfg.Port)
 	if err != nil {
@@ -33,6 +31,24 @@ func testPrint(e env) error {
 	if agent == nil {
 		return &failure{msg: "the agent is not running", hints: []string{"Start it: printpipe start"}}
 	}
+	return sendTestLabel(e, cfg, size)
+}
+
+// testLabelSize is the size the test label is made for: --size, or else the
+// configured printer's.
+func testLabelSize(e env, cfg config.Config) (testlabel.Size, error) {
+	if s, ok := e.flags["size"]; ok {
+		size, err := testlabel.ParseSize(s)
+		if err != nil {
+			return size, usageError("--size " + err.Error())
+		}
+		return size, nil
+	}
+	return labelSize(cfg), nil
+}
+
+// sendTestLabel posts the test label to the agent running on the configured port.
+func sendTestLabel(e env, cfg config.Config, size testlabel.Size) error {
 	if len(cfg.Origins) == 0 {
 		return labelNotSent("config.json allows no origin to print", "Add the page that prints: printpipe config --origin <url>")
 	}

@@ -25,6 +25,17 @@ type env struct {
 	// flags has the last one.
 	values map[string][]string
 	args   []string
+	// program is what the agent is started from when that is not this copy:
+	// install has placed the program that is to run.
+	program string
+}
+
+// agentProgram is the program file an agent started by hand runs.
+func (e env) agentProgram() (string, error) {
+	if e.program != "" {
+		return e.program, nil
+	}
+	return e.sys.Executable()
 }
 
 // say prints a line, or lines joined by newlines, of a command's output.
@@ -33,13 +44,14 @@ func (e env) say(format string, args ...any) error {
 	return err
 }
 
-// command is one subcommand. Its flags all take a value.
+// command is one subcommand.
 type command struct {
-	name    string
-	usage   string // the line in help; empty for the hidden server command
-	flags   []string
-	maxArgs int // how many positional arguments it takes
-	run     func(env) error
+	name     string
+	usage    string   // the line in help; empty for the hidden server command
+	flags    []string // the flags that take a value
+	switches []string // the flags that take none, "true" when given
+	maxArgs  int      // how many positional arguments it takes
+	run      func(env) error
 }
 
 func commands() []command {
@@ -51,7 +63,7 @@ func commands() []command {
 		{name: "startup", usage: "startup [on|off]          Show, or turn on or off, starting the agent at login.", maxArgs: 1, run: startup},
 		{name: "config", usage: "config [flags]            Show the configuration, or change it with flags.", flags: []string{"queue", "device", "origin", "remove-origin", "port"}, run: configure},
 		{name: "version", usage: "version                   Print the version.", run: version},
-		{name: "install", usage: "install                   Install the agent for this user, find the printer and start.", run: install},
+		{name: "install", usage: "install [flags]           Install the agent for this user, find the printer, start and print a test label.", flags: []string{"origin", "queue", "device", "port", "size"}, switches: []string{"no-test-print"}, run: install},
 		{name: "upgrade", usage: "upgrade                   Install the latest release."},
 		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too."},
 		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files."},
@@ -123,6 +135,13 @@ func parseArgs(c command, args []string) (map[string]string, map[string][]string
 			continue
 		}
 		name, value, hasValue := strings.Cut(name, "=")
+		if slices.Contains(c.switches, name) {
+			if hasValue {
+				return nil, nil, nil, usageError(fmt.Sprintf("flag --%s takes no value", name))
+			}
+			flags[name] = "true"
+			continue
+		}
 		if !slices.Contains(c.flags, name) {
 			return nil, nil, nil, usageError(fmt.Sprintf("unknown flag --%s", name))
 		}

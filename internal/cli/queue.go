@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -13,38 +14,75 @@ import (
 	"github.com/alexgred/printpipe/internal/printer"
 )
 
-// install is, so far, only its printer step on macOS and Linux; the steps
-// around it, and Windows, come with the rest of the command.
-func install(e env) error {
-	if e.sys.GOOS() == "windows" {
-		return &failure{msg: "printpipe install is not implemented yet on this OS"}
-	}
-	cfg, path, err := loadConfig(e, "", false)
-	if err != nil {
-		return err
-	}
-	if cfg.Device != "" {
-		return e.say("Printer: device %s", cfg.Device)
+// cupsPrinter is the configuration with the printer to print to on macOS and
+// Linux: a saved device or queue that is still there, the one --device chooses,
+// else what chooseQueue finds. Without one it fails and the caller keeps what
+// it returns.
+func cupsPrinter(e env, cfg config.Config, path string, chosen *printer.USBID) (config.Config, error) {
+	if chosen == nil && cfg.Device != "" {
+		return cfg, nil
 	}
 	queues, err := printer.Queues(e.ctx, e.sys)
 	if errors.Is(err, exec.ErrNotFound) {
-		return noCUPS()
+		return cfg, noCUPS()
 	}
 	if err != nil {
-		return &failure{msg: "could not read the printer queues: " + err.Error(), hints: []string{"Check that CUPS is running and run the same command again."}}
+		return cfg, &failure{msg: "could not read the printer queues: " + err.Error(), hints: []string{"Check that CUPS is running and run the same command again."}}
+	}
+	if chosen != nil {
+		return chooseDevice(e, cfg, path, queues, *chosen)
 	}
 	if hasQueue(queues, cfg.Queue) {
-		return e.say("Printer: queue %s", cfg.Queue)
+		return cfg, nil
 	}
+	// A queue named on the command line is no reason to print to another.
+	if _, named := e.flags["queue"]; named {
+		return cfg, &failure{
+			msg:   fmt.Sprintf("there is no printer queue %s", cfg.Queue),
+			hints: []string{"See the queues: lpstat -e", "Run the same command again with one of them."},
+		}
+	}
+	return chooseQueue(e, cfg, path, queues)
+}
 
-	next, err := chooseQueue(e, cfg, path, queues)
+// chooseDevice is the configuration with a queue for the printer --device names:
+// one there is, else a new one.
+func chooseDevice(e env, cfg config.Config, path string, queues []printer.QueueInfo, id printer.USBID) (config.Config, error) {
+	model, ok := models.ByUSB(id.VID, id.PID)
+	if !ok {
+		return cfg, &failure{
+			msg:   fmt.Sprintf("%s is not a printer model printpipe knows", id),
+			hints: []string{"An existing queue: printpipe install --queue <name>"},
+		}
+	}
+	for _, q := range models.UsableQueues(queues) {
+		if model.PrintsTo(q.DeviceURI) && serialMatches(id, q.DeviceURI) {
+			cfg.Queue, cfg.Device = q.Name, ""
+			return cfg, nil
+		}
+	}
+	known, err := connectedKnown(e)
 	if err != nil {
-		return err
+		return cfg, err
 	}
-	if err := saveConfig(e, path, next); err != nil {
-		return err
+	known = slices.DeleteFunc(known, func(k knownPrinter) bool { return !id.Matches(k.id) })
+	switch len(known) {
+	case 0:
+		return cfg, notConnected(id)
+	case 1:
+		return createQueue(e, cfg, path, queues, model, id)
+	default:
+		return cfg, severalConnected(e.sys.GOOS(), known)
 	}
-	return e.say("Printer: queue %s", next.Queue)
+}
+
+// notConnected is the printer named on the command line not being there: no
+// reason to print to another.
+func notConnected(id printer.USBID) error {
+	return &failure{
+		msg:   fmt.Sprintf("the printer %s is not connected", id),
+		hints: []string{"Plug it in, switch it on and run the same command again."},
+	}
 }
 
 // chooseQueue is the configuration with the queue to print to: a known model's
@@ -56,12 +94,16 @@ func chooseQueue(e env, cfg config.Config, path string, queues []printer.QueueIn
 		cfg.Queue = usable[0].Name
 		return cfg, nil
 	}
-	model, connected, err := connectedModel(e)
+	known, err := connectedKnown(e)
 	if err != nil {
 		return cfg, err
 	}
-	if connected {
-		return createQueue(e, cfg, path, queues, model)
+	switch len(known) {
+	case 0:
+	case 1:
+		return createQueue(e, cfg, path, queues, known[0].model, printer.USBID{VID: known[0].id.VID, PID: known[0].id.PID})
+	default:
+		return cfg, severalConnected(e.sys.GOOS(), known)
 	}
 	if len(usable) > 0 {
 		cfg.Queue = usable[0].Name
@@ -76,10 +118,10 @@ func chooseQueue(e env, cfg config.Config, path string, queues []printer.QueueIn
 	}
 }
 
-// createQueue makes a queue for the known model that is connected, with the
-// one elevation printpipe ever asks for, and returns the configuration with it.
-// Only system commands run as root, never printpipe itself.
-func createQueue(e env, cfg config.Config, path string, queues []printer.QueueInfo, model models.Model) (config.Config, error) {
+// createQueue makes a queue for the known model that is connected, the printer
+// id names, with the one elevation printpipe ever asks for, and returns the
+// configuration with it. Only system commands run as root, never printpipe itself.
+func createQueue(e env, cfg config.Config, path string, queues []printer.QueueInfo, model models.Model, id printer.USBID) (config.Config, error) {
 	name := queueName(model.Name, queues, cfg.CreatedQueue)
 	if err := e.say("Creating the printer queue %s; sudo may ask for your computer password.", name); err != nil {
 		return cfg, err
@@ -88,7 +130,7 @@ func createQueue(e env, cfg config.Config, path string, queues []printer.QueueIn
 	if err != nil {
 		return cfg, createFailed(err)
 	}
-	uri, err := modelURI(model, uris)
+	uri, err := deviceURI(e.sys.GOOS(), model, id, uris)
 	if err != nil {
 		return cfg, err
 	}
@@ -101,41 +143,45 @@ func createQueue(e env, cfg config.Config, path string, queues []printer.QueueIn
 	if err := printer.CreateQueue(e.ctx, e.sys, name, uri, ppd); err != nil {
 		return cfg, createFailed(err)
 	}
-	cfg.Queue, cfg.CreatedQueue = name, name
+	cfg.Queue, cfg.Device, cfg.CreatedQueue = name, "", name
 	return cfg, nil
 }
 
-// connectedModel is the one known printer that is plugged in, false when there
-// is none. It needs no root, so that no password is asked for when there is
-// nothing to create a queue for.
-func connectedModel(e env) (models.Model, bool, error) {
-	usb, err := printer.ListUSB(e.ctx, e.sys)
-	if err != nil {
-		return models.Model{}, false, fmt.Errorf("could not list the USB printers: %w", err)
-	}
-	var found []models.Model
-	for _, p := range usb {
-		if m, ok := models.ByUSB(p.VID, p.PID); ok {
-			found = append(found, m)
-		}
-	}
-	switch len(found) {
-	case 0:
-		return models.Model{}, false, nil
-	case 1:
-		return found[0], true, nil
-	default:
-		return models.Model{}, false, severalConnected(len(found), found[0])
-	}
+// knownPrinter is a connected printer of a model printpipe knows.
+type knownPrinter struct {
+	model models.Model
+	id    printer.USBID
 }
 
-// modelURI is the one device URI CUPS has for the model: printpipe never guesses
-// which printer labels should go to.
-func modelURI(model models.Model, uris []string) (string, error) {
+// connectedKnown is the known printers that are plugged in. It needs no root, so
+// that no password is asked for when there is nothing to create a queue for.
+func connectedKnown(e env) ([]knownPrinter, error) {
+	usb, err := printer.ListUSB(e.ctx, e.sys)
+	if err != nil {
+		return nil, fmt.Errorf("could not list the USB printers: %w", err)
+	}
+	return knownAmong(usb), nil
+}
+
+func knownAmong(usb []printer.USBPrinter) []knownPrinter {
+	var known []knownPrinter
+	for _, p := range usb {
+		if m, ok := models.ByUSB(p.VID, p.PID); ok {
+			known = append(known, knownPrinter{m, p.USBID})
+		}
+	}
+	return known
+}
+
+// deviceURI is the one device URI CUPS has for the printer id names: printpipe
+// never guesses which printer labels should go to.
+func deviceURI(goos string, model models.Model, id printer.USBID, uris []string) (string, error) {
 	var match []string
+	var found []knownPrinter
 	for _, uri := range uris {
-		if model.PrintsTo(uri) {
+		if model.PrintsTo(uri) && serialMatches(id, uri) {
 			match = append(match, uri)
+			found = append(found, knownPrinter{model, printer.USBID{VID: model.VID, PID: model.PID, Serial: strings.ToUpper(uriSerial(uri))}})
 		}
 	}
 	switch len(match) {
@@ -147,17 +193,62 @@ func modelURI(model models.Model, uris []string) (string, error) {
 			hints: []string{"Switch the printer off and on and run the same command again.", existingQueueHint},
 		}
 	default:
-		return "", severalConnected(len(match), model)
+		return "", severalConnected(goos, found)
 	}
 }
 
-// severalConnected is several printers of a model being plugged in. The spec's
-// printpipe config --device usb:… per printer works only on Windows.
-func severalConnected(count int, model models.Model) error {
-	return &failure{
-		msg:   fmt.Sprintf("%d %s printers are connected", count, model.Name),
-		hints: []string{"Leave one plugged in and run the same command again.", existingQueueHint},
+// serialMatches is whether a device URI is of the printer id names, by its serial
+// when id has one. USB IDs are not in a URI, which names the model instead.
+func serialMatches(id printer.USBID, uri string) bool {
+	return id.Serial == "" || strings.EqualFold(uriSerial(uri), id.Serial)
+}
+
+// uriSerial is the serial in a device URI such as
+// usb://Xprinter/XP-365B?serial=1&interface=1; empty when it has none.
+func uriSerial(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return ""
 	}
+	return u.Query().Get("serial")
+}
+
+// severalConnected is several known printers being plugged in, with a ready
+// command for each. A usb: device is printed to only on Windows; elsewhere install
+// makes a queue for the one it names. A printer with no serial cannot be named
+// apart from one of its model.
+func severalConnected(goos string, printers []knownPrinter) error {
+	msg := fmt.Sprintf("%d known label printers are connected", len(printers))
+	if !slices.ContainsFunc(printers, func(p knownPrinter) bool { return p.model.Name != printers[0].model.Name }) {
+		msg = fmt.Sprintf("%d %s printers are connected", len(printers), printers[0].model.Name)
+	}
+	command := "printpipe install --device "
+	if goos == "windows" {
+		command = "printpipe config --device "
+	}
+	var hints []string
+	noSerial := false
+	for _, p := range printers {
+		if p.id.Serial == "" && sameModelCount(printers, p) > 1 {
+			noSerial = true
+			continue
+		}
+		hints = append(hints, command+p.id.String())
+	}
+	if noSerial {
+		hints = append(hints, "A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again.")
+	}
+	return &failure{msg: msg, hints: hints}
+}
+
+func sameModelCount(printers []knownPrinter, p knownPrinter) int {
+	count := 0
+	for _, other := range printers {
+		if other.id.VID == p.id.VID && other.id.PID == p.id.PID {
+			count++
+		}
+	}
+	return count
 }
 
 // queueName is the name for the queue to create: the one printpipe created
