@@ -47,6 +47,10 @@ func cups(sys *fakeSystem, queues map[string]string, lpinfo string) {
 		case "lpinfo":
 			return []byte(lpinfo), nil
 		case "lpadmin":
+			if args[1] == "-x" {
+				delete(queues, args[2])
+				return nil, nil
+			}
 			queues[args[2]] = "device-uri=" + xpURI + " printer-is-accepting-jobs=true"
 			return nil, nil
 		}

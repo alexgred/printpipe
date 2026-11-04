@@ -65,7 +65,7 @@ func commands() []command {
 		{name: "version", usage: "version                   Print the version.", run: version},
 		{name: "install", usage: "install [flags]           Install the agent for this user, find the printer, start and print a test label.", flags: []string{"origin", "queue", "device", "port", "size"}, switches: []string{"no-test-print"}, run: install},
 		{name: "upgrade", usage: "upgrade                   Install the latest release.", run: upgrade},
-		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too."},
+		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too.", switches: []string{"queue"}, run: remove},
 		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files.", run: status},
 		{name: "test-print", usage: "test-print [--size W,H]   Print the built-in test label.", flags: []string{"size"}, run: testPrint},
 		{name: "serve", flags: []string{"config", "dry-run"}, run: serve},
@@ -104,9 +104,6 @@ func dispatch(e env, args []string) error {
 	for _, c := range commands() {
 		if c.name != args[0] {
 			continue
-		}
-		if c.run == nil {
-			return &failure{msg: fmt.Sprintf("printpipe %s is not implemented yet", c.name)}
 		}
 		flags, values, positional, err := parseArgs(c, args[1:])
 		if err != nil {

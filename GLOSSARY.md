@@ -5,7 +5,7 @@ A small agent for the computer a label printer is plugged into: web pages send i
 ## Printing
 
 **Print agent**:
-A program on the computer a label printer is plugged into, through which web pages send labels to the printer. The same program, run as a terminal command, installs, starts, stops and upgrades itself.
+A program on the computer a label printer is plugged into, through which web pages send labels to the printer. The same program, run as a terminal command, installs, starts, stops, upgrades and removes itself.
 _Avoid_: driver, print server
 
 **Label**:

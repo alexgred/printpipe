@@ -17,6 +17,9 @@ type Dirs struct {
 // Paths are printpipe's own files.
 type Paths struct {
 	Binary, Config, Log string
+	// ConfigDir and LogDir are the folders only printpipe's files are in, which
+	// remove takes away too. The log on macOS has no such folder.
+	ConfigDir, LogDir string
 	// BinaryDir is the folder of Binary. NewBinary and OldBinary are beside it in
 	// a swap: the program coming in, and the one that was there.
 	BinaryDir, NewBinary, OldBinary string
@@ -33,6 +36,9 @@ func For(d Dirs) Paths {
 			Config: backslashed(d.Config, "printpipe", "config.json"),
 			Log:    backslashed(d.LocalAppData, "printpipe", "agent.log"),
 
+			ConfigDir: backslashed(d.Config, "printpipe"),
+			LogDir:    backslashed(d.LocalAppData, "printpipe"),
+
 			BinaryDir: backslashed(d.LocalAppData, "Programs", "printpipe"),
 			NewBinary: backslashed(d.LocalAppData, "Programs", "printpipe", ".printpipe.new"),
 			OldBinary: backslashed(d.LocalAppData, "Programs", "printpipe", ".printpipe.old"),
@@ -43,6 +49,8 @@ func For(d Dirs) Paths {
 			Config: join(d.Config, "printpipe", "config.json"),
 			Log:    join(d.Home, "Library", "Logs", "printpipe.log"),
 
+			ConfigDir: join(d.Config, "printpipe"),
+
 			BinaryDir: join(d.Home, ".local", "bin"),
 			NewBinary: join(d.Home, ".local", "bin", ".printpipe.new"),
 			OldBinary: join(d.Home, ".local", "bin", ".printpipe.old"),
@@ -52,6 +60,9 @@ func For(d Dirs) Paths {
 			Binary: join(d.Home, ".local", "bin", "printpipe"),
 			Config: join(d.Config, "printpipe", "config.json"),
 			Log:    join(d.Home, ".local", "state", "printpipe", "agent.log"),
+
+			ConfigDir: join(d.Config, "printpipe"),
+			LogDir:    join(d.Home, ".local", "state", "printpipe"),
 
 			BinaryDir: join(d.Home, ".local", "bin"),
 			NewBinary: join(d.Home, ".local", "bin", ".printpipe.new"),

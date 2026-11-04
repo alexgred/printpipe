@@ -65,6 +65,12 @@ func CreateQueue(ctx context.Context, c Computer, name, uri, ppdPath string) err
 	return err
 }
 
+// DeleteQueue deletes the queue with this name.
+func DeleteQueue(ctx context.Context, c Computer, name string) error {
+	_, err := c.Run(ctx, nil, "sudo", "lpadmin", "-x", name)
+	return err
+}
+
 // errSchedulerDown is CUPS being installed but its scheduler not running.
 var errSchedulerDown = errors.New("the CUPS scheduler is not running")
 

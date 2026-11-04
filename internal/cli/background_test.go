@@ -38,7 +38,7 @@ func (d *fakeSystemd) systemctl(args []string) ([]byte, error) {
 	}
 	_, hasUnit := d.sys.files[unitPath]
 	switch args[1] {
-	case "show-environment", "daemon-reload":
+	case "show-environment", "daemon-reload", "reset-failed":
 		return nil, nil
 	case "show":
 		return fmt.Appendf(nil, "%d\n", d.mainPID), nil

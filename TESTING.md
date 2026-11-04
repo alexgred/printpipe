@@ -95,6 +95,23 @@ On each OS as an ordinary user, with an older release installed, the agent runni
 
 Not run yet on any OS: no release exists yet.
 
+## `remove`
+
+On each OS as an ordinary user, with printpipe installed, the agent running and `startup on`. No fake reaches what deletes the files on Windows or what the OS does with the autostart entries.
+
+1. `printpipe remove`: `Agent stopped`, `printpipe removed`, exit 0. Nothing answers on the port, and these are gone: the binary, `config.json`, the log and its `.1`, `.printpipe.old`, and their folders where they are printpipe's own. `~/.local/bin` stays.
+2. Linux: `~/.config/systemd/user/printpipe.service` and `default.target.wants/printpipe.service` are gone, and `systemctl --user status printpipe` says the unit could not be found. macOS: both plists are gone, and `launchctl print gui/$UID/io.github.alexgred.printpipe` finds no service. Log out and back in: no agent.
+3. A created queue: step 1 prints `Printer queue kept: <name>` and the command, `lpstat -e` still lists it, and no password is asked for.
+4. Delete that queue with the command printed, install again so that printpipe creates it anew, then `printpipe remove --queue`: one `sudo` password, `Printer queue deleted: <name>`, gone from `lpstat -e`. A queue of your own, also the one printed to: `printpipe created no printer queue here`, and it is still there. So is a queue kept by an earlier `remove` and found again by `install`: printpipe no longer knows that it created it.
+5. Refuse the `sudo` password: `administrator rights were refused`, exit 1, and the agent still runs and `status` works.
+6. With a copy of the binary kept elsewhere, `<copy> remove` and `<copy> remove --queue` once all is gone: `not running`, `printpipe removed`, exit 0.
+7. Windows, from the installed `printpipe.exe`, in a user folder with a space in its name if there is one: within a few seconds of the command ending, `%LOCALAPPDATA%\Programs\printpipe` and `%LOCALAPPDATA%\printpipe` are gone, with no window having opened. The value `printpipe` is gone from `HKCU\...\CurrentVersion\Run`, a new terminal's `Path` has no printpipe folder and its other entries are as they were, `%VARIABLES%` included. Log off and on: no agent, no error.
+8. Windows, `remove --queue`: `printpipe creates no printer queue on Windows`, exit 0.
+9. Windows, with an agent printing a long job when `remove` runs: the files still go once it ends, within 30 s.
+10. Windows, `remove` over ssh, ending the session straight after: the files still go.
+
+Not run yet on any OS.
+
 ## `status`
 
 On each OS as an ordinary user, with printpipe installed and a usable config:

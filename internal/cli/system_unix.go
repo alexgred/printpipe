@@ -57,6 +57,10 @@ func lsofProgram(out string) (string, error) {
 // StopRequests is never closed: SIGTERM asks a process to exit here.
 func (OS) StopRequests() (<-chan struct{}, error) { return nil, nil }
 
+// Only Windows keeps a running program from being removed.
+
+func (OS) RemoveAfterExit([]string, []string) error { return errors.ErrUnsupported }
+
 // Only Windows has a Run key.
 
 func (OS) HasRunValue(string) bool          { return false }

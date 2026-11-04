@@ -88,6 +88,14 @@ type fakeSystem struct {
 	installedPrograms []string
 	// removeErr is what removing a file fails with, by its path.
 	removeErr map[string]error
+	// emptied is each path asked to go with no file there and none under it: on the
+	// real computer, an empty folder gone or nothing at all.
+	emptied []string
+	// removedLater and foldersLater are what was left to a command that outlives
+	// this one, and removeLaterErr why that could not be.
+	removedLater   []string
+	foldersLater   []string
+	removeLaterErr error
 	// renameErr is what a rename to a path fails with once, by that path.
 	renameErr map[string]error
 	// redirects and downloads are the web, by URL: what a URL redirects to, and
@@ -228,9 +236,26 @@ func (s *fakeSystem) Remove(name string) error {
 		return err
 	}
 	if _, ok := s.files[name]; !ok {
+		for path := range s.files {
+			if strings.HasPrefix(path, name+"/") || strings.HasPrefix(path, name+`\`) {
+				return &fs.PathError{Op: "remove", Path: name, Err: syscall.ENOTEMPTY}
+			}
+		}
+		s.emptied = append(s.emptied, name)
 		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrNotExist}
 	}
 	delete(s.files, name)
+	return nil
+}
+
+func (s *fakeSystem) RemoveAfterExit(files, folders []string) error {
+	if s.removeLaterErr != nil {
+		return s.removeLaterErr
+	}
+	for _, file := range files {
+		delete(s.files, file)
+	}
+	s.removedLater, s.foldersLater = files, folders
 	return nil
 }
 

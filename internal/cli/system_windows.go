@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -30,6 +32,7 @@ const (
 	broadcastTimeout = 1000 // ms
 
 	detachedProcess        = 0x00000008
+	createNoWindow         = 0x08000000
 	createBreakawayFromJob = 0x01000000
 
 	eventModifyState               = 0x0002
@@ -72,6 +75,48 @@ func spawn(flags uint32, name string, args []string) error {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+// RemoveAfterExit runs cmd.exe with no window: unlike a detached process, it has a
+// console for ping to share, so that ping opens none. Like Spawn it leaves a job
+// object if it may, or an ssh session ending would end it too. The command line is
+// written out because cmd reads quotes by its own rule, which exec's escaping does not
+// follow. A path with a % could be expanded by cmd, which Windows user folders
+// practically never have.
+func (OS) RemoveAfterExit(files, folders []string) error {
+	cmdExe, err := exec.LookPath("cmd.exe")
+	if err != nil {
+		return err
+	}
+	line := `cmd.exe /d /s /c "` + removeAfterExitCommand(files, folders) + `"`
+	start := func(flags uint32) error {
+		cmd := exec.Command(cmdExe)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: line, CreationFlags: flags}
+		cmd.Dir = filepath.Dir(cmdExe) // holds none of the folders it removes
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		return cmd.Process.Release()
+	}
+	const flags = createNoWindow | syscall.CREATE_NEW_PROCESS_GROUP
+	if start(flags|createBreakawayFromJob) == nil {
+		return nil
+	}
+	return start(flags)
+}
+
+// removeAfterExitCommand tries each file once a second, for up to 30 s: an agent off
+// its port may be finishing a job. ping is how a command waits with no keyboard.
+// Once the file is gone, the rest of its loop does nothing.
+func removeAfterExitCommand(files, folders []string) string {
+	var steps []string
+	for _, file := range files {
+		steps = append(steps, fmt.Sprintf(`(for /l %%i in (1,1,30) do if exist "%[1]s" (ping -n 2 127.0.0.1 >NUL & del /f /q "%[1]s" >NUL 2>&1))`, file))
+	}
+	for _, folder := range folders {
+		steps = append(steps, fmt.Sprintf(`rmdir "%s" >NUL 2>&1`, folder))
+	}
+	return strings.Join(steps, " & ")
 }
 
 // Terminate signals the stop event. Auto-reset, it wakes one agent and is off

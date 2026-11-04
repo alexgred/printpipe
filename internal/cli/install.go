@@ -244,10 +244,7 @@ func sayPath(e env, folder string) error {
 	if err != nil {
 		return err
 	}
-	onPath := slices.ContainsFunc(strings.Split(current, ";"), func(entry string) bool {
-		return strings.EqualFold(strings.TrimRight(entry, `\`), folder)
-	})
-	if onPath {
+	if slices.ContainsFunc(strings.Split(current, ";"), isPathEntry(folder)) {
 		return nil
 	}
 	if trimmed := strings.TrimRight(current, ";"); trimmed != "" {
@@ -257,6 +254,13 @@ func sayPath(e env, folder string) error {
 		return err
 	}
 	return e.say("Added to your Path; a new terminal will find printpipe by name")
+}
+
+// isPathEntry is whether an entry of the user's Path on Windows names the folder.
+func isPathEntry(folder string) func(string) bool {
+	return func(entry string) bool {
+		return strings.EqualFold(strings.TrimRight(entry, `\`), folder)
+	}
 }
 
 // findPrinter is the configuration with the printer found: what was there on a

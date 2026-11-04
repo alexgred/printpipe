@@ -4,7 +4,7 @@ A small agent for the computer a label printer is plugged into. Web pages in tha
 
 The same binary is the `printpipe` command and the background agent.
 
-> Work in progress: the first release will be v0.2.0. `remove` and the download scripts are not there yet; running in the background works on Linux and Windows, and on macOS it has not yet been run on a real Mac.
+> Work in progress: the first release will be v0.2.0. The download scripts are not there yet; running in the background works on Linux and Windows, and on macOS it has not yet been run on a real Mac.
 
 ## Commands
 
@@ -18,6 +18,7 @@ printpipe restart     restart the agent, or start it when it is stopped
 printpipe startup [on|off]  show, or turn on or off, starting the agent at login
 printpipe config [flags]    show the configuration, or change it with flags
 printpipe upgrade     install the latest release
+printpipe remove [--queue]  stop and remove the agent; --queue deletes the queue it created
 printpipe status      show whether the agent runs, its version, printer and files
 printpipe test-print  print the built-in test label through the running agent
 ```
@@ -25,6 +26,8 @@ printpipe test-print  print the built-in test label through the running agent
 `printpipe status` answers offline whether printing works here and where everything is: whether the agent runs and what manages it (`launchd`, `systemd` or no service manager), with its pid; the installed and running versions, suggesting `restart` when they differ; the port; whether it starts at login; the configured queue or device and whether the OS has it; and the paths of the binary, config and log. It exits with 1 when the agent is not running. The printer's paper and state are not checked.
 
 `printpipe upgrade` installs the latest release when it is newer, and otherwise says so and succeeds, so it also answers whether there is an update. It checks the download against `SHA256SUMS`, changes only the binary, restarts the agent only if it was running, and rolls back to the previous binary if the new one does not come up. Any failure exits with 1 and leaves the agent working. It runs only from the installed binary and takes no flags.
+
+`printpipe remove` stops the agent and removes the binary, config, log and whatever starts the agent (the systemd unit, the autostart entry, the launchd plists, the `Run` value and the `Path` entry). A printer queue stays, so that other programs can go on using it, and when printpipe created it `remove` prints the command to delete it. `remove --queue` deletes that queue too, with one `sudo`, and never a queue printpipe did not create; on Windows, where it creates none, it says so and succeeds. Run again, `remove` succeeds. On Windows the binary and the log go a moment after the command ends: a running program cannot be deleted.
 
 `printpipe install --origin <url>` takes a computer from nothing to a running agent with a printed test label, one line per step, and can be run again at any time:
 

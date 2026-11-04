@@ -99,6 +99,9 @@ type service interface {
 	// manager names what keeps the running agent with this pid running; empty when
 	// nothing does, as for printpipe serve in a terminal.
 	manager(e env, pid int) string
+	// removeStartup takes away all that starts the agent, at login or by start,
+	// once it is stopped. With nothing there it does nothing.
+	removeStartup(e env) error
 }
 
 // agentWaitSeconds is how long a command waits for the agent to come up or go.
@@ -167,16 +170,22 @@ func stop(e env) error {
 	if err != nil {
 		return err
 	}
+	return stopIfRunning(e, svc, cfg.Port, agent)
+}
+
+// stopIfRunning stops the agent found on the port, nil for none, and says what it
+// found.
+func stopIfRunning(e env, svc service, port int, agent *runningAgent) error {
 	if agent == nil {
 		if err := svc.stopStarting(e); err != nil {
 			return err
 		}
 		return e.say("not running")
 	}
-	if err := svc.stop(e, cfg.Port, agent.PID); err != nil {
+	if err := svc.stop(e, port, agent.PID); err != nil {
 		return err
 	}
-	if err := waitForAgentGone(e, cfg.Port); err != nil {
+	if err := waitForAgentGone(e, port); err != nil {
 		return err
 	}
 	return e.say("Agent stopped")
@@ -405,6 +414,16 @@ type systemd struct{}
 
 const unitName = "printpipe.service"
 
+// unitFile is where the unit is, for the user's manager and for removing it from
+// a computer that no longer has one.
+func unitFile(sys System) (string, error) {
+	dir, err := sys.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return path.Join(dir, "systemd", "user", unitName), nil
+}
+
 func (systemd) systemctl(e env, args ...string) ([]byte, error) {
 	return e.sys.Run(e.ctx, nil, "systemctl", append([]string{"--user"}, args...)...)
 }
@@ -417,11 +436,10 @@ func (d systemd) writeUnit(e env) error {
 	if err != nil {
 		return err
 	}
-	dir, err := e.sys.ConfigDir()
+	file, err := unitFile(e.sys)
 	if err != nil {
 		return err
 	}
-	file := path.Join(dir, "systemd", "user", unitName)
 	unit := "[Unit]\n" +
 		"Description=printpipe print agent\n" +
 		"\n" +
@@ -534,6 +552,30 @@ func (d systemd) manager(e env, pid int) string {
 	return "systemd"
 }
 
+// removeStartup asks first: systemctl disable fails on a unit that is not there. A
+// unit that crashed is listed as failed until told otherwise, whatever is removed, and
+// a reload that failed last time is still owed with the unit gone. An autostart entry
+// from when there was no manager goes too.
+func (d systemd) removeStartup(e env) error {
+	file, err := unitFile(e.sys)
+	if err != nil {
+		return err
+	}
+	if _, err := e.sys.ReadFile(file); err == nil {
+		if _, err := d.systemctl(e, "disable", unitName); err != nil {
+			return err
+		}
+		_, _ = d.systemctl(e, "reset-failed", unitName)
+		if err := removeIfThere(e.sys, file); err != nil {
+			return couldNotRemove(file, err)
+		}
+	}
+	if _, err := d.systemctl(e, "daemon-reload"); err != nil {
+		return err
+	}
+	return removeAutostart(e)
+}
+
 // detached is a computer without a user manager: the agent is a child in its
 // own session, found again by its port, and an XDG autostart entry starts it
 // at login.
@@ -587,6 +629,19 @@ func (d detached) refreshStartup(e env) error {
 }
 
 func (detached) manager(env, int) string { return "" }
+
+// removeStartup also removes a unit from when there was a manager, which is not
+// there to be told, and the link that enabled it.
+func (detached) removeStartup(e env) error {
+	file, err := unitFile(e.sys)
+	if err != nil {
+		return err
+	}
+	if err := removeEach(e, []string{path.Join(path.Dir(file), "default.target.wants", unitName), file}); err != nil {
+		return err
+	}
+	return removeAutostart(e)
+}
 
 // windows is a PC with Windows: the agent is a process with no console, found
 // again by its port.
@@ -650,6 +705,8 @@ func (w windows) refreshStartup(e env) error {
 }
 
 func (windows) manager(env, int) string { return "" }
+
+func (w windows) removeStartup(e env) error { return w.setStartup(e, false) }
 
 // launchd is the Mac's user session manager, which owns the agent as a service.
 type launchd struct{}
@@ -877,4 +934,18 @@ func (l launchd) manager(e env, pid int) string {
 		return ""
 	}
 	return "launchd"
+}
+
+// removeStartup removes the two plists. stop has taken the service out of launchd,
+// which needed the one in Application Support for that.
+func (l launchd) removeStartup(e env) error {
+	login, err := l.loginPlist(e)
+	if err != nil {
+		return err
+	}
+	file, err := l.plistFile(e)
+	if err != nil {
+		return err
+	}
+	return removeEach(e, []string{login, file})
 }

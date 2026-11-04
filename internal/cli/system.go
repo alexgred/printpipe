@@ -50,6 +50,11 @@ type System interface {
 	// WriteProgram is WriteFile for a file that is to be run.
 	WriteProgram(name string, data []byte) error
 	Remove(name string) error
+	// RemoveAfterExit leaves files, then folders if they are empty, to a hidden
+	// command that outlives this process and waits for whatever holds them: Windows
+	// cannot delete a program that is running, and this one is. It says nothing of
+	// how that went, and is asked for on Windows only.
+	RemoveAfterExit(files, folders []string) error
 	// Rename moves a file, replacing what is at to.
 	Rename(from, to string) error
 	// OpenAppend opens a file to add to, creating it and its folder, and
