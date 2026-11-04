@@ -27,6 +27,8 @@ type System interface {
 	printer.Computer
 	// GOOS is the operating system, runtime.GOOS.
 	GOOS() string
+	// UID is the user's id, os.Getuid; launchd's session is named by it.
+	UID() int
 	// HomeDir is the user's home folder, os.UserHomeDir.
 	HomeDir() (string, error)
 	// ConfigDir is the user's configuration folder, os.UserConfigDir.
@@ -77,6 +79,7 @@ type OS struct{}
 var client = &http.Client{Timeout: 30 * time.Second}
 
 func (OS) GOOS() string                                 { return runtime.GOOS }
+func (OS) UID() int                                     { return os.Getuid() }
 func (OS) HomeDir() (string, error)                     { return os.UserHomeDir() }
 func (OS) ConfigDir() (string, error)                   { return os.UserConfigDir() }
 func (OS) LocalAppData() (string, error)                { return os.UserCacheDir() }

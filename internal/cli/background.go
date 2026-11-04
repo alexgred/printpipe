@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -78,6 +80,8 @@ type service interface {
 	start(e env) error
 	// stop stops the running agent with this pid.
 	stop(e env, port, pid int) error
+	// stopStarting keeps an agent that does not answer from coming up later.
+	stopStarting(e env) error
 	// restart replaces the running agent with this pid.
 	restart(e env, port, pid int) error
 	// setStartup turns starting at login on or off, leaving the agent as it is.
@@ -95,6 +99,8 @@ func serviceOf(e env, command string) (service, error) {
 	case "linux":
 	case "windows":
 		return windows{}, nil
+	case "darwin":
+		return launchd{}, nil
 	default:
 		return nil, &failure{msg: fmt.Sprintf("printpipe %s is not implemented yet on this OS", command)}
 	}
@@ -151,6 +157,9 @@ func stop(e env) error {
 		return err
 	}
 	if agent == nil {
+		if err := svc.stopStarting(e); err != nil {
+			return err
+		}
 		return e.say("not running")
 	}
 	if err := svc.stop(e, cfg.Port, agent.PID); err != nil {
@@ -320,7 +329,12 @@ func removeAutostart(e env) error {
 	if err != nil {
 		return err
 	}
-	if err := e.sys.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	return removeIfThere(e.sys, file)
+}
+
+// removeIfThere removes a file; one that is not there is no error.
+func removeIfThere(sys System, file string) error {
+	if err := sys.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -410,6 +424,9 @@ func (d systemd) stop(e env, port, pid int) error {
 	return err
 }
 
+// A unit that exited with 1 stays down.
+func (systemd) stopStarting(env) error { return nil }
+
 // restart hands an agent that is not the unit's over to the unit.
 func (d systemd) restart(e env, port, pid int) error {
 	owned, err := d.runsAgent(e, pid)
@@ -464,6 +481,8 @@ func (detached) start(e env) error {
 func (detached) stop(e env, port, pid int) error {
 	return terminate(e, port, pid)
 }
+
+func (detached) stopStarting(env) error { return nil }
 
 func (d detached) restart(e env, port, pid int) error {
 	return replaceByHand(e, d, port, pid)
@@ -520,6 +539,8 @@ func (windows) stop(e env, port, pid int) error {
 	return e.sys.Kill(agent.PID)
 }
 
+func (windows) stopStarting(env) error { return nil }
+
 func (w windows) restart(e env, port, pid int) error {
 	return replaceByHand(e, w, port, pid)
 }
@@ -542,3 +563,220 @@ func (windows) setStartup(e env, on bool) error {
 }
 
 func (windows) startsAtLogin(e env) bool { return e.sys.HasRunValue(runValue) }
+
+// launchd is the Mac's user session manager, which owns the agent as a service.
+type launchd struct{}
+
+const launchdLabel = "io.github.alexgred.printpipe"
+
+func (launchd) launchctl(e env, args ...string) ([]byte, error) {
+	return e.sys.Run(e.ctx, nil, "launchctl", args...)
+}
+
+func (launchd) domain(e env) string { return "gui/" + strconv.Itoa(e.sys.UID()) }
+
+func (l launchd) service(e env) string { return l.domain(e) + "/" + launchdLabel }
+
+// plistFile is the plist launchd is given, in printpipe's Application Support
+// folder.
+func (launchd) plistFile(e env) (string, error) {
+	dir, err := e.sys.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return path.Join(dir, "printpipe", launchdLabel+".plist"), nil
+}
+
+// plist makes the service run this program. The agent's output goes nowhere: it
+// keeps its own log. launchd cannot tell one failing exit from another, so it
+// also runs again, every 10 s, an agent that exits with 1; what stops that is
+// taking the service out of launchd, which stop does.
+func (launchd) plist(e env) ([]byte, error) {
+	exe, err := e.sys.Executable()
+	if err != nil {
+		return nil, err
+	}
+	var program bytes.Buffer
+	if err := xml.EscapeText(&program, []byte(exe)); err != nil {
+		return nil, err
+	}
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>` + launchdLabel + `</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + program.String() + `</string>
+		<string>serve</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+</dict>
+</plist>
+`), nil
+}
+
+// loginPlist is the copy in LaunchAgents, which launchd loads at login. It is
+// there only while starting at login is on.
+func (launchd) loginPlist(e env) (string, error) {
+	home, err := e.sys.HomeDir()
+	if err != nil {
+		return "", err
+	}
+	return path.Join(home, "Library", "LaunchAgents", launchdLabel+".plist"), nil
+}
+
+// writePlist writes the plist, and returns it and whether it changed. A copy
+// in LaunchAgents follows, so that login runs the same program as start.
+func (l launchd) writePlist(e env) ([]byte, bool, error) {
+	plist, err := l.plist(e)
+	if err != nil {
+		return nil, false, err
+	}
+	file, err := l.plistFile(e)
+	if err != nil {
+		return nil, false, err
+	}
+	old, err := e.sys.ReadFile(file)
+	changed := err != nil || !bytes.Equal(old, plist)
+	if changed {
+		if err := e.sys.WriteFile(file, plist); err != nil {
+			return nil, false, err
+		}
+	}
+	if l.startsAtLogin(e) {
+		login, err := l.loginPlist(e)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := e.sys.WriteFile(login, plist); err != nil {
+			return nil, false, err
+		}
+	}
+	return plist, changed, nil
+}
+
+// loadedService is what launchd has of the service: pid is the agent it runs,
+// 0 for none, and program what it read from the plist.
+type loadedService struct {
+	loaded  bool
+	pid     int
+	program string
+}
+
+// loadedService asks launchd, whose print fails when it does not have the
+// service. A line it does not recognize leaves its field empty.
+func (l launchd) loadedService(e env) loadedService {
+	out, err := l.launchctl(e, "print", l.service(e))
+	if err != nil {
+		return loadedService{}
+	}
+	found := loadedService{loaded: true}
+	for line := range strings.Lines(string(out)) {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "pid = "); ok {
+			found.pid, _ = strconv.Atoi(value)
+		}
+		if value, ok := strings.CutPrefix(line, "program = "); ok {
+			found.program = value
+		}
+	}
+	return found
+}
+
+// start also serves a service launchd already has, which it would refuse to
+// bootstrap: an agent that exited leaves it loaded. launchd reads a plist only
+// when it loads it, so one that changed, or another program than it loaded,
+// takes loading again. kickstart -k is for the same program.
+func (l launchd) start(e env) error {
+	_, changed, err := l.writePlist(e)
+	if err != nil {
+		return err
+	}
+	exe, err := e.sys.Executable()
+	if err != nil {
+		return err
+	}
+	service := l.loadedService(e)
+	if service.loaded && !changed && service.program == exe {
+		_, err := l.launchctl(e, "kickstart", "-k", l.service(e))
+		return err
+	}
+	if err := l.stopStarting(e); err != nil {
+		return err
+	}
+	file, err := l.plistFile(e)
+	if err != nil {
+		return err
+	}
+	_, err = l.launchctl(e, "bootstrap", l.domain(e), file)
+	return err
+}
+
+// stop ends an agent launchd does not run by itself: printpipe serve in a
+// terminal. A service that is loaded all the same goes too, or it would take
+// the port once that is free.
+func (l launchd) stop(e env, port, pid int) error {
+	if l.loadedService(e).pid != pid {
+		if err := terminate(e, port, pid); err != nil {
+			return err
+		}
+	}
+	return l.stopStarting(e)
+}
+
+// stopStarting takes the service out of launchd, which ends its agent: launchd
+// would run again one that exits with 1.
+func (l launchd) stopStarting(e env) error {
+	if !l.loadedService(e).loaded {
+		return nil
+	}
+	file, err := l.plistFile(e)
+	if err != nil {
+		return err
+	}
+	_, err = l.launchctl(e, "bootout", l.domain(e), file)
+	return err
+}
+
+// restart hands an agent launchd does not run over to the service.
+func (l launchd) restart(e env, port, pid int) error {
+	if l.loadedService(e).pid != pid {
+		return replaceByHand(e, l, port, pid)
+	}
+	return l.start(e)
+}
+
+// setStartup only moves the copy in LaunchAgents, and never runs launchctl
+// disable: that would outlast the copy and keep bootstrap from starting the
+// agent.
+func (l launchd) setStartup(e env, on bool) error {
+	login, err := l.loginPlist(e)
+	if err != nil {
+		return err
+	}
+	if !on {
+		return removeIfThere(e.sys, login)
+	}
+	plist, _, err := l.writePlist(e)
+	if err != nil {
+		return err
+	}
+	return e.sys.WriteFile(login, plist)
+}
+
+func (l launchd) startsAtLogin(e env) bool {
+	login, err := l.loginPlist(e)
+	if err != nil {
+		return false
+	}
+	_, err = e.sys.ReadFile(login)
+	return err == nil
+}

@@ -3,10 +3,13 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -23,11 +26,32 @@ func (OS) Spawn(name string, args ...string) error {
 
 func (OS) Terminate(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
 
-// ProcessExe reads /proc, so it knows only Linux's processes: only Linux uses
-// it. The link of a program replaced while running ends in " (deleted)".
-func (OS) ProcessExe(pid int) (string, error) {
+// ProcessExe reads /proc on Linux, where the link of a program replaced while
+// running ends in " (deleted)". A Mac has no /proc, so lsof tells, which also
+// fails for another user's process, where ps would answer.
+func (o OS) ProcessExe(pid int) (string, error) {
+	if runtime.GOOS == "darwin" {
+		out, err := o.Run(context.Background(), nil, "lsof", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn")
+		if err != nil {
+			return "", err
+		}
+		return lsofProgram(string(out))
+	}
 	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	return strings.TrimSuffix(exe, " (deleted)"), err
+}
+
+var errNoProgram = errors.New("lsof names no program file")
+
+// lsofProgram is the program file in what lsof -Fn says of a process's text
+// files: the first name, on a line of its own after an n.
+func lsofProgram(out string) (string, error) {
+	for line := range strings.Lines(out) {
+		if name, ok := strings.CutPrefix(line, "n"); ok {
+			return strings.TrimSuffix(name, "\n"), nil
+		}
+	}
+	return "", errNoProgram
 }
 
 // StopRequests is never closed: SIGTERM asks a process to exit here.

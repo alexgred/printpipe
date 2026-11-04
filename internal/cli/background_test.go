@@ -289,11 +289,11 @@ func TestStartupRefusesAnythingButOnOrOff(t *testing.T) {
 	}
 }
 
-// macOS has no service wired in so far.
-func TestMacOSSaysItIsNotThereYet(t *testing.T) {
+// An OS with no service wired in says so.
+func TestAnotherOSSaysItIsNotThereYet(t *testing.T) {
 	for _, command := range []string{"start", "stop", "restart", "startup"} {
 		sys := newFakeSystem()
-		sys.goos = "darwin"
+		sys.goos = "freebsd"
 		wantFailure(t, run(t, sys, command), "error: printpipe "+command+" is not implemented yet on this OS\n")
 	}
 }
@@ -713,5 +713,405 @@ func TestOnWindowsStartupReportsARegistryThatRefuses(t *testing.T) {
 		sys.runValueErr = errors.New("Access is denied.")
 
 		wantFailure(t, run(t, sys, "startup", state), "error: Access is denied.\n")
+	}
+}
+
+const (
+	macExe         = "/Users/me/.local/bin/printpipe"
+	plistPath      = "/Users/me/Library/Application Support/printpipe/io.github.alexgred.printpipe.plist"
+	loginPlistPath = "/Users/me/Library/LaunchAgents/io.github.alexgred.printpipe.plist"
+	launchdDomain  = "gui/501"
+	launchdService = "gui/501/io.github.alexgred.printpipe"
+)
+
+// fakeLaunchd is launchctl in the user's GUI session. As the real one, it
+// refuses to load a service twice and to act on one that is not loaded.
+type fakeLaunchd struct {
+	sys    *fakeSystem
+	loaded bool
+	// pid is the agent the service runs, 0 for none.
+	pid int
+	// program is what launchd read from the plist when it loaded the service.
+	program string
+	// starts is whether a started service answers on the port.
+	starts bool
+}
+
+// onMac is a Mac whose launchd runs the agent when it is told to.
+func onMac() (*fakeSystem, *fakeLaunchd) {
+	sys := newFakeSystem()
+	sys.goos = "darwin"
+	sys.home = "/Users/me"
+	sys.configDir = "/Users/me/Library/Application Support"
+	sys.executable = macExe
+	l := &fakeLaunchd{sys: sys, starts: true}
+	sys.programs["launchctl"] = l.launchctl
+	return sys, l
+}
+
+func (l *fakeLaunchd) launchctl(args []string) ([]byte, error) {
+	notLoaded := errors.New("launchctl: exit status 113: Could not find service")
+	switch args[0] {
+	case "print":
+		if args[1] != launchdService {
+			return nil, fmt.Errorf("not the service: %v", args)
+		}
+		if !l.loaded {
+			return nil, notLoaded
+		}
+		out := launchdService + " = {\n\tactive count = 1\n\tprogram = " + l.program + "\n"
+		if l.pid != 0 {
+			out += fmt.Sprintf("\tstate = running\n\tpid = %d\n", l.pid)
+		} else {
+			out += "\tstate = not running\n"
+		}
+		return []byte(out + "}\n"), nil
+	case "bootstrap":
+		if args[1] != launchdDomain || args[2] != plistPath {
+			return nil, fmt.Errorf("not the plist in the session: %v", args)
+		}
+		plist, ok := l.sys.files[plistPath]
+		if !ok || l.loaded {
+			return nil, errors.New("launchctl: exit status 5: Bootstrap failed: 5: Input/output error")
+		}
+		_, rest, _ := strings.Cut(string(plist), "<array>\n\t\t<string>")
+		l.program, _, _ = strings.Cut(rest, "</string>")
+		l.loaded = true
+		l.run()
+	case "bootout":
+		if args[1] != launchdDomain || args[2] != plistPath {
+			return nil, fmt.Errorf("not the plist in the session: %v", args)
+		}
+		if !l.loaded {
+			return nil, errors.New("launchctl: exit status 3: Boot-out failed: 3: No such process")
+		}
+		l.loaded, l.pid = false, 0
+		l.sys.onPort = nil
+	case "kickstart":
+		if args[1] != "-k" || args[2] != launchdService {
+			return nil, fmt.Errorf("not a restart of the service: %v", args)
+		}
+		if !l.loaded {
+			return nil, notLoaded
+		}
+		l.run()
+	default:
+		return nil, fmt.Errorf("unknown launchctl command %v", args)
+	}
+	return nil, nil
+}
+
+func (l *fakeLaunchd) run() {
+	if !l.starts {
+		return
+	}
+	l.sys.runAgent(&fakePrinter{})
+	l.sys.exes[agentPID] = l.program
+	l.pid = agentPID
+}
+
+// agentExits ends the service's agent and leaves the service loaded.
+func (l *fakeLaunchd) agentExits() {
+	l.pid, l.sys.onPort = 0, nil
+}
+
+// runService makes the agent run as the loaded service.
+func (l *fakeLaunchd) runService() {
+	l.loaded, l.program = true, macExe
+	l.sys.files[plistPath] = plistOf(macExe)
+	l.run()
+}
+
+// plistOf is the plist that runs this program, as start writes it.
+func plistOf(exe string) []byte {
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.alexgred.printpipe</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + exe + `</string>
+		<string>serve</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+</dict>
+</plist>
+`)
+}
+
+func TestOnMacOSStartWritesThePlistAndBootstrapsIt(t *testing.T) {
+	sys, _ := onMac()
+
+	wantOutput(t, run(t, sys, "start"), "Agent started, version dev\n")
+	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
+	if got, want := string(sys.files[plistPath]), string(plistOf(macExe)); got != want {
+		t.Errorf("the plist is\n%s\nwant\n%s", got, want)
+	}
+	if _, wrote := sys.files[loginPlistPath]; wrote {
+		t.Error("start turned starting at login on")
+	}
+}
+
+// A path is text in XML: a folder with an & would make launchd refuse the plist.
+func TestOnMacOSThePlistEscapesTheProgramPath(t *testing.T) {
+	sys, _ := onMac()
+	sys.executable = "/Users/me/Tom & Jerry/printpipe"
+	run(t, sys, "start")
+
+	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>/Users/me/Tom &amp; Jerry/printpipe</string>") {
+		t.Errorf("the path is not escaped:\n%s", plist)
+	}
+}
+
+func TestOnMacOSStartOnARunningAgentJustSaysSo(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+
+	wantOutput(t, run(t, sys, "start"), "already running, version dev\n")
+	wantNotRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
+}
+
+// The service stays loaded after an agent that exited, and launchd refuses to
+// bootstrap it a second time.
+func TestOnMacOSStartKickstartsALoadedServiceThatDoesNotAnswer(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	l.agentExits()
+
+	wantOutput(t, run(t, sys, "start"), "Agent started, version dev\n")
+	wantRan(t, sys, "launchctl kickstart -k "+launchdService)
+}
+
+// launchd reads the plist only when it loads it.
+func TestOnMacOSStartReloadsAServiceWhosePlistChanged(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	l.agentExits()
+	sys.executable = "/Users/me/Downloads/printpipe"
+
+	wantOutput(t, run(t, sys, "start"), "Agent started, version dev\n")
+	wantRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
+}
+
+func TestOnMacOSStartPointsAtTheLogWhenTheAgentDoesNotAnswer(t *testing.T) {
+	sys, l := onMac()
+	l.starts = false
+
+	wantFailure(t, run(t, sys, "start"), "error: the agent did not answer within 10 s\n  Log: /Users/me/Library/Logs/printpipe.log\n")
+}
+
+func TestOnMacOSStopBootsTheServiceOut(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	wantRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+	if len(sys.terminated) != 0 {
+		t.Errorf("terminated %v", sys.terminated)
+	}
+}
+
+func TestOnMacOSStopOnAStoppedAgentJustSaysSo(t *testing.T) {
+	sys, _ := onMac()
+
+	wantOutput(t, run(t, sys, "stop"), "not running\n")
+	wantNotRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+}
+
+// launchd keeps running again an agent that exits with 1, such as on a broken
+// config: after stop it must not come up once the config is fixed.
+func TestOnMacOSStopTakesOutAServiceWhoseAgentDoesNotAnswer(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	l.agentExits()
+
+	wantOutput(t, run(t, sys, "stop"), "not running\n")
+	if l.loaded {
+		t.Error("the service is still loaded")
+	}
+}
+
+// runStrayMacAgent runs the agent outside launchd, as printpipe serve in a
+// terminal: a process of this printpipe that exits on SIGTERM.
+func runStrayMacAgent(sys *fakeSystem) {
+	runStrayAgent(sys)
+	sys.exes[agentPID] = macExe
+}
+
+func TestOnMacOSStopStopsAnAgentLaunchdDoesNotRun(t *testing.T) {
+	sys, _ := onMac()
+	runStrayMacAgent(sys)
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	if !slices.Equal(sys.terminated, []int{agentPID}) {
+		t.Errorf("terminated %v, want the agent", sys.terminated)
+	}
+	wantNotRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+}
+
+// The service keeps failing on the taken port, and would take it once free.
+func TestOnMacOSStopAlsoTakesOutAServiceThatDoesNotRunTheAgent(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	l.pid = 0
+	runStrayMacAgent(sys)
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	if !slices.Equal(sys.terminated, []int{agentPID}) {
+		t.Errorf("terminated %v, want the agent", sys.terminated)
+	}
+	if l.loaded {
+		t.Error("the service is still loaded")
+	}
+}
+
+func TestOnMacOSStopNeverSignalsAProcessThatIsNotPrintpipe(t *testing.T) {
+	sys, _ := onMac()
+	runStrayMacAgent(sys)
+	sys.exes[agentPID] = "/Applications/Other.app/Contents/MacOS/Other"
+
+	wantFailure(t, run(t, sys, "stop"), "error: process 4242 on port 8631 runs /Applications/Other.app/Contents/MacOS/Other, not this printpipe\n"+
+		"  Close that program and run the same command again.\n")
+	if len(sys.terminated) != 0 {
+		t.Errorf("terminated %v", sys.terminated)
+	}
+}
+
+func TestOnMacOSRestartKickstartsTheService(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+
+	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
+	wantRan(t, sys, "launchctl kickstart -k "+launchdService)
+	wantNotRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+}
+
+func TestOnMacOSRestartOnAStoppedAgentStartsIt(t *testing.T) {
+	sys, _ := onMac()
+
+	wantOutput(t, run(t, sys, "restart"), "Agent started, version dev\n")
+	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
+}
+
+// As on Linux, what runs afterwards is the program that was asked to restart.
+func TestOnMacOSRestartReloadsAServiceWhosePlistChanged(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	sys.executable = "/Users/me/Downloads/printpipe"
+
+	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
+	wantRan(t, sys, "launchctl bootout "+launchdDomain+" "+plistPath)
+	wantRan(t, sys, "launchctl bootstrap "+launchdDomain+" "+plistPath)
+	if plist := string(sys.files[plistPath]); !strings.Contains(plist, "<string>/Users/me/Downloads/printpipe</string>") {
+		t.Errorf("the plist does not run the program:\n%s", plist)
+	}
+}
+
+// The plist on disk says nothing of what launchd loaded: startup on has already
+// written the new one, and kickstart would run the old program again.
+func TestOnMacOSRestartAfterStartupFromAnotherCopyRunsThatCopy(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	sys.executable = "/Users/me/Downloads/printpipe"
+	sys.exes[agentPID] = sys.executable
+
+	run(t, sys, "startup", "on")
+	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
+	if l.program != sys.executable {
+		t.Errorf("launchd runs %q, want %q", l.program, sys.executable)
+	}
+}
+
+func TestOnMacOSRestartHandsAnAgentLaunchdDoesNotRunOverToTheService(t *testing.T) {
+	sys, l := onMac()
+	runStrayMacAgent(sys)
+
+	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
+	if !slices.Equal(sys.terminated, []int{agentPID}) {
+		t.Errorf("terminated %v, want the agent", sys.terminated)
+	}
+	if !l.loaded || l.pid != agentPID {
+		t.Errorf("the service does not run the agent: loaded %v, pid %d", l.loaded, l.pid)
+	}
+}
+
+// startup and start are independent: neither turns the other on or off, and
+// launchctl plays no part, least of all launchctl disable.
+func TestOnMacOSStartupCopiesThePlistToLaunchAgents(t *testing.T) {
+	sys, _ := onMac()
+
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+	wantOutput(t, run(t, sys, "startup", "on"), "Starts at login: on\n")
+	if got, want := string(sys.files[loginPlistPath]), string(plistOf(macExe)); got != want {
+		t.Errorf("LaunchAgents has\n%s\nwant\n%s", got, want)
+	}
+	if got, want := string(sys.files[plistPath]), string(plistOf(macExe)); got != want {
+		t.Errorf("Application Support has\n%s\nwant\n%s", got, want)
+	}
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: on\n")
+	if sys.onPort != nil {
+		t.Error("startup on started the agent")
+	}
+
+	wantOutput(t, run(t, sys, "startup", "off"), "Starts at login: off\n")
+	if _, left := sys.files[loginPlistPath]; left {
+		t.Error("the copy is still in LaunchAgents")
+	}
+	if _, kept := sys.files[plistPath]; !kept {
+		t.Error("the plist in Application Support is gone")
+	}
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+	if len(sys.ran) != 0 {
+		t.Errorf("ran %q", sys.ranCommands())
+	}
+}
+
+func TestOnMacOSStartupOffLeavesTheAgentRunning(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	sys.files[loginPlistPath] = plistOf(macExe)
+
+	wantOutput(t, run(t, sys, "startup", "off"), "Starts at login: off\n")
+	if sys.onPort == nil || !l.loaded {
+		t.Error("startup off stopped the agent")
+	}
+}
+
+func TestOnMacOSStartupOffWithNoCopySucceeds(t *testing.T) {
+	sys, _ := onMac()
+
+	wantOutput(t, run(t, sys, "startup", "off"), "Starts at login: off\n")
+}
+
+// What starts at login is the same as what start runs, as with the Linux unit.
+func TestOnMacOSAChangedPlistAlsoChangesTheCopyInLaunchAgents(t *testing.T) {
+	sys, _ := onMac()
+	run(t, sys, "startup", "on")
+	sys.executable = "/Users/me/Downloads/printpipe"
+
+	run(t, sys, "start")
+	if got, want := string(sys.files[loginPlistPath]), string(plistOf(sys.executable)); got != want {
+		t.Errorf("LaunchAgents has\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A changed plist does not turn starting at login on.
+func TestOnMacOSAChangedPlistMakesNoCopyWhenStartupIsOff(t *testing.T) {
+	sys, l := onMac()
+	l.runService()
+	sys.executable = "/Users/me/Downloads/printpipe"
+
+	run(t, sys, "restart")
+	if _, wrote := sys.files[loginPlistPath]; wrote {
+		t.Error("restart turned starting at login on")
 	}
 }

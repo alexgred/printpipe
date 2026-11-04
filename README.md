@@ -4,7 +4,7 @@ A small agent for the computer a label printer is plugged into. Web pages in tha
 
 The same binary is the `printpipe` command and the background agent.
 
-> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux and Windows so far.
+> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux and Windows, and on macOS it has not yet been run on a real Mac.
 
 ## Commands
 
@@ -21,6 +21,8 @@ printpipe test-print  print the built-in test label through the running agent
 `start` on a running agent and `stop` on a stopped one just say so and succeed. `start` and `startup` are independent: turning starting at login on does not start the agent, and turning it off does not stop it. The agent is found only by its port, through `/health`; if another program answers there, printpipe says so and leaves it alone.
 
 On Linux the agent is the systemd user unit `printpipe.service` in `~/.config/systemd/user/`, which runs the `printpipe` that wrote it: `start`, `stop` and `restart` are `systemctl --user`, and `startup` is `enable` and `disable`. Without a user systemd manager the agent is a detached child that `stop` ends with SIGTERM, once `/proc` shows that the process is printpipe, and starting at login is an entry in `~/.config/autostart/`.
+
+On macOS launchd owns the agent, as the service `io.github.alexgred.printpipe` in the user's session. Its plist in `~/Library/Application Support/printpipe/` runs the `printpipe` that wrote it: `start` and `stop` are `launchctl bootstrap` and `bootout gui/$UID <plist>`, and `restart` is `kickstart -k`. `startup on` copies the plist to `~/Library/LaunchAgents`, and `startup off` removes the copy. launchd runs a failed agent again every 10 s or so, also one that refuses to run because of its config, until `stop`.
 
 On Windows the agent is a process with no window and no console, which outlives the terminal it was started from. `stop` signals the event `Local\printpipe-stop` for a graceful exit, then ends the process by force, once its program file shows that it is printpipe. `startup on` adds the value `printpipe` to the user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which runs the `printpipe.exe` that wrote it with `start`; none of this needs admin rights. On Windows 11 24H2 and later nothing shows at logon; older builds may flash a console window for a moment.
 

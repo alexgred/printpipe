@@ -21,6 +21,7 @@ import (
 // answers on the agent's port.
 type fakeSystem struct {
 	goos      string
+	uid       int
 	home      string
 	configDir string
 	// executable is the path of the running printpipe.
@@ -81,6 +82,7 @@ type ranProgram struct {
 func newFakeSystem() *fakeSystem {
 	return &fakeSystem{
 		goos:       "linux",
+		uid:        501,
 		home:       "/home/me",
 		configDir:  "/home/me/.config",
 		executable: "/home/me/.local/bin/printpipe",
@@ -118,6 +120,7 @@ func (s *fakeSystem) ReadDir(name string) ([]string, error) {
 }
 
 func (s *fakeSystem) GOOS() string                  { return s.goos }
+func (s *fakeSystem) UID() int                      { return s.uid }
 func (s *fakeSystem) HomeDir() (string, error)      { return s.home, nil }
 func (s *fakeSystem) ConfigDir() (string, error)    { return s.configDir, nil }
 func (s *fakeSystem) LocalAppData() (string, error) { return s.home + `\AppData\Local`, nil }
