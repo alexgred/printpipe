@@ -2,10 +2,7 @@
 // folder.
 package config
 
-import (
-	"encoding/json"
-	"path/filepath"
-)
+import "encoding/json"
 
 // DefaultPort is the port when config.json names none.
 const DefaultPort = 8631
@@ -27,10 +24,6 @@ type Config struct {
 
 // Default is the configuration before config.json exists.
 func Default() Config { return Config{Port: DefaultPort} }
-
-// Path is config.json in the user's configuration folder dir
-// (os.UserConfigDir).
-func Path(dir string) string { return filepath.Join(dir, "printpipe", "config.json") }
 
 // Parse reads config.json, keeping the defaults of what it leaves out.
 func Parse(b []byte) (Config, error) {

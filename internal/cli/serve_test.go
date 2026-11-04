@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,7 +13,10 @@ import (
 	"time"
 )
 
-const configPath = "/home/me/.config/printpipe/config.json"
+const (
+	configPath = "/home/me/.config/printpipe/config.json"
+	logPath    = "/home/me/.local/state/printpipe/agent.log"
+)
 
 // running is printpipe serve running in the background of a test.
 type running struct {
@@ -149,5 +154,97 @@ func TestServePrintsToAUSBDevice(t *testing.T) {
 	got := srv.stop()
 	if !strings.Contains(got.stderr, "printer: USB printer usb:1FC9:2016:A1,") {
 		t.Errorf("log %q does not name the USB printer", got.stderr)
+	}
+}
+
+func TestServeLogsToItsOwnFileAsWellAsStderr(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	got := startServer(t, sys).stop()
+
+	log := string(sys.files[logPath])
+	if !strings.Contains(log, `printer: queue "label"`) {
+		t.Errorf("log file %q does not name the printer", log)
+	}
+	if !strings.Contains(got.stderr, `printer: queue "label"`) {
+		t.Errorf("stderr %q does not name the printer", got.stderr)
+	}
+}
+
+// The agent runs with nobody watching, so why it would not run must be in the
+// file start points at.
+func TestServeLogsWhyItRefusedToRun(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"]}`)
+	if got := run(t, sys, "serve"); got.code != 1 {
+		t.Fatalf("got %+v, want exit 1", got)
+	}
+	if log := string(sys.files[logPath]); !strings.Contains(log, "no printer: set a queue or a device") {
+		t.Errorf("log file %q does not say why", log)
+	}
+}
+
+func TestServeLogsAJobThatDidNotPrint(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "device": "/dev/usb/lp0"}`)
+	sys.deviceErr["/dev/usb/lp0"] = fs.ErrPermission
+	srv := startServer(t, sys)
+
+	req, _ := http.NewRequest(http.MethodPost, srv.url+"/print", strings.NewReader("PRINT 1,1\r\n"))
+	req.Header.Set("Origin", "https://app.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	srv.stop()
+
+	if log := string(sys.files[logPath]); !strings.Contains(log, "no permission to write to /dev/usb/lp0") {
+		t.Errorf("log file %q does not have the failure", log)
+	}
+}
+
+// About 1 MB and one previous file: the log never fills the disk.
+func TestServeLogKeepsOnePreviousFileOfAboutOneMegabyte(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	full := bytes.Repeat([]byte("x"), 1<<20-1)
+	sys.files[logPath] = full
+	sys.files[logPath+".1"] = []byte("older still")
+	startServer(t, sys).stop()
+
+	if !bytes.Equal(sys.files[logPath+".1"], full) {
+		t.Errorf("the previous file has %d bytes, want the full log of %d", len(sys.files[logPath+".1"]), len(full))
+	}
+	if log := string(sys.files[logPath]); !strings.Contains(log, `printer: queue "label"`) || len(log) > 1000 {
+		t.Errorf("the new log file is %q, want only what came after", log)
+	}
+}
+
+func TestServeAppendsToASmallLog(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	sys.files[logPath] = []byte("yesterday\n")
+	startServer(t, sys).stop()
+
+	if log := string(sys.files[logPath]); !strings.HasPrefix(log, "yesterday\n") || !strings.Contains(log, "printer:") {
+		t.Errorf("log file %q, want the new lines after the old", log)
+	}
+	if _, rotated := sys.files[logPath+".1"]; rotated {
+		t.Error("a small log was rotated")
+	}
+}
+
+// Files of another OS: the agent reads and logs where that OS's row says.
+func TestServeUsesTheFilesOfItsOS(t *testing.T) {
+	sys := newFakeSystem()
+	sys.goos = "darwin"
+	sys.home = "/Users/me"
+	sys.configDir = "/Users/me/Library/Application Support"
+	sys.files["/Users/me/Library/Application Support/printpipe/config.json"] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	startServer(t, sys).stop()
+
+	if log := string(sys.files["/Users/me/Library/Logs/printpipe.log"]); !strings.Contains(log, "printer:") {
+		t.Errorf("no log in ~/Library/Logs: files %v", sys.files)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alexgred/printpipe/internal/config"
+	"github.com/alexgred/printpipe/internal/layout"
 	"github.com/alexgred/printpipe/internal/printer"
 	"github.com/alexgred/printpipe/internal/server"
 )
@@ -21,14 +23,31 @@ import (
 // serve is the hidden server command: the agent itself, which start runs in
 // the background. --config replaces config.json, --dry-run prints nowhere
 // (each job goes to the file, or to the log with "-").
+//
+// It logs to its own file as well as stderr: in the background nobody reads
+// stderr, so that goes nowhere there.
 func serve(e env) error {
+	files, err := filesOf(e.sys)
+	if err != nil {
+		return err
+	}
+	logFile := &agentLog{sys: e.sys, path: files.Log}
+	defer logFile.Close()
+	err = runServer(e, log.New(io.MultiWriter(logFile, e.stderr), "", log.LstdFlags))
+	if err != nil {
+		// Run prints it on stderr.
+		log.New(logFile, "", log.LstdFlags).Printf("error: %v", err)
+	}
+	return err
+}
+
+func runServer(e env, logger *log.Logger) error {
 	path, explicit := e.flags["config"]
 	cfg, path, err := loadConfig(e, path, explicit)
 	if err != nil {
 		return err
 	}
 
-	logger := log.New(e.stderr, "", log.LstdFlags)
 	p, desc, err := pick(cfg, e.flags["dry-run"], logger, e.sys)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
@@ -40,13 +59,13 @@ func serve(e env) error {
 		return fmt.Errorf("%s: port %d is not 1 to 65535", path, cfg.Port)
 	}
 
-	addr := agentAddr(cfg)
+	addr := agentAddr(cfg.Port)
 	l, err := e.sys.Listen(addr)
 	if err != nil {
 		return err
 	}
 	srv := &http.Server{
-		Handler:           server.Handler(server.Options{Version: Version, PID: os.Getpid(), Origins: cfg.Origins}, p),
+		Handler:           server.Handler(server.Options{Version: Version, PID: os.Getpid(), Origins: cfg.Origins}, loggedPrinter{p, logger}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		ErrorLog:          logger,
@@ -65,9 +84,27 @@ func serve(e env) error {
 	}
 }
 
+// filesOf is where printpipe keeps its files on this computer.
+func filesOf(sys System) (layout.Paths, error) {
+	d := layout.Dirs{GOOS: sys.GOOS()}
+	var err error
+	if d.Home, err = sys.HomeDir(); err != nil {
+		return layout.Paths{}, err
+	}
+	if d.Config, err = sys.ConfigDir(); err != nil {
+		return layout.Paths{}, err
+	}
+	if d.GOOS == "windows" {
+		if d.LocalAppData, err = sys.LocalAppData(); err != nil {
+			return layout.Paths{}, err
+		}
+	}
+	return layout.For(d), nil
+}
+
 // agentAddr is where the agent listens: 127.0.0.1 only.
-func agentAddr(c config.Config) string {
-	return net.JoinHostPort("127.0.0.1", strconv.Itoa(c.Port))
+func agentAddr(port int) string {
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 }
 
 // loadConfig reads config.json, or the file path when explicit. A missing
@@ -75,11 +112,11 @@ func agentAddr(c config.Config) string {
 // the path it read.
 func loadConfig(e env, path string, explicit bool) (config.Config, string, error) {
 	if !explicit {
-		dir, err := e.sys.ConfigDir()
+		files, err := filesOf(e.sys)
 		if err != nil {
 			return config.Config{}, "", err
 		}
-		path = config.Path(dir)
+		path = files.Config
 	}
 	cfg := config.Default()
 	switch b, err := e.sys.ReadFile(path); {

@@ -46,6 +46,23 @@ Not verified yet: what `lpstat -e` does on a computer with no queue at all; whet
 | 2026-11-04 | Fedora 44 | XP-365B | the commit adding this table | Steps 2, 3, 5, 7 and 8 pass. Step 1 passes: the label came out with Cyrillic in Cyrillic, too close to the left edge, so the text moved 1 mm right. With the cover open, through the queue: `test-print` says the label should have come out and CUPS completes the job in about 8 s with no error (`XP-365B-16`). The label came out once the cover was closed, with the new margin. Steps 4 and 6 not run: the user is not in `lp`. |
 | 2026-11-04 | Fedora 44 | XP-365B | the commit adding this row | Device file, with write access given by an ACL instead of the `lp` group. Before the fix `test-print` succeeded but no label came out, cover open (6 labels) or closed (2), while `cat` to the same file printed: `os.OpenFile` had made the device non-blocking. With a blocking write step 4 prints. Step 6 not finished: with the cover open the printer took 3 labels at once, with `test-print` saying they should have come out, and all 3 came out once the cover was closed. 3 labels are too few to make it stop taking data, so the timeout was not seen. |
 
+## Linux: running in the background
+
+On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/.config/printpipe/config.json` and `printpipe` in `~/.local/bin` (nothing else answering on the port):
+
+1. `printpipe start` says `Agent started, version X`. `systemctl --user status printpipe.service` shows it active, and `~/.config/systemd/user/printpipe.service` runs that binary. A second `start` says `already running, version X`.
+2. Close the terminal and open another: `printpipe test-print` still prints.
+3. `printpipe restart` says `Agent restarted, version X`, and `/health` answers a new `pid`.
+4. `printpipe stop` says `Agent stopped`; `systemctl --user status printpipe.service` shows it inactive. A second `stop` says `not running`. `restart` now starts it.
+5. `printpipe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and `systemctl --user is-enabled printpipe.service` says `enabled`. Log out and back in: the agent runs. `startup off` leaves it running, and after another login it does not run.
+6. Kill the agent with `kill -SEGV <pid>`: the unit starts it again within a few seconds. Then break the config (remove `queue` and `device`), `stop`, `start`: after 10 s `the agent did not answer within 10 s` and the log path, the log says `no printer`, and the unit does not keep restarting. Put the config back.
+7. With the agent stopped, `printpipe serve` in a terminal, then `printpipe stop` in another: the agent exits, though the unit did not run it. The same with `restart`: the unit runs it afterwards.
+8. With the agent stopped, `python3 -m http.server 8631 --bind 127.0.0.1`: `start`, `stop` and `restart` each say `port 8631 is used by another program`, exit 1, and the server keeps running.
+9. Without a user manager (`ssh` in as a user with no session, or `env -u XDG_RUNTIME_DIR -u DBUS_SESSION_BUS_ADDRESS printpipe …`): `start` gives a detached child that survives closing the terminal, `stop` ends it, and `startup on` writes `~/.config/autostart/printpipe.desktop`, which starts the agent at the next desktop login.
+10. Write more than 1 MB to the log (`make dev`-style `printpipe serve --dry-run -` with jobs from a page, or fill `agent.log` with `truncate -s 1048570`, then `restart`): `agent.log.1` holds the old log and `agent.log` starts anew.
+
+Checked without a real manager: on 2026-11-04 steps 1, 3, 4, 5 (`startup` only) and 8 of the detached child, with `systemctl` off the `PATH`, a separate `HOME` and another port; `systemd-analyze verify` accepts the unit. Not run yet: everything through a real `systemctl --user`.
+
 ## macOS: through CUPS
 
 Not run yet: needs a Mac, before printpipe is used on one. Repeat the Linux steps 1 and 2, and check that `printer.ListUSB` finds the printer: the `ioreg -r -c IOUSBHostDevice -l -w 0` output it reads is modelled on what is known of its format, not on a real Mac's output. The USB strings may also name the XP-365B as `Printer Printer-80`, as they do on Linux, since `ioreg` gives no IEEE 1284 ID. Check too that `LC_ALL=C.UTF-8 lpstat -r` says `scheduler is running`.

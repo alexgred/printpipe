@@ -3,9 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"net/http"
 
 	"github.com/alexgred/printpipe/internal/config"
@@ -28,15 +26,18 @@ func testPrint(e env) error {
 			return usageError("--size " + err.Error())
 		}
 	}
-	agentURL := "http://" + agentAddr(cfg)
-	if err := findAgent(e, agentURL, cfg.Port); err != nil {
+	agent, err := findAgent(e, cfg.Port)
+	if err != nil {
 		return err
+	}
+	if agent == nil {
+		return &failure{msg: "the agent is not running", hints: []string{"Start it: printpipe start"}}
 	}
 	if len(cfg.Origins) == 0 {
 		return labelNotSent("config.json allows no origin to print", "Add the page that prints: printpipe config --origin <url>")
 	}
 
-	req, err := http.NewRequestWithContext(e.ctx, http.MethodPost, agentURL+"/print", bytes.NewReader(testlabel.TSPL(size, Version, e.sys.Now())))
+	req, err := http.NewRequestWithContext(e.ctx, http.MethodPost, agentURL(cfg.Port)+"/print", bytes.NewReader(testlabel.TSPL(size, Version, e.sys.Now())))
 	if err != nil {
 		return err
 	}
@@ -87,39 +88,6 @@ func labelSize(c config.Config) testlabel.Size {
 		return m.TestLabelSize
 	}
 	return models.Default().TestLabelSize
-}
-
-// findAgent checks that printpipe answers on the port, so that nothing is
-// ever sent to a program printpipe does not own.
-func findAgent(e env, agentURL string, port int) error {
-	req, err := http.NewRequestWithContext(e.ctx, http.MethodGet, agentURL+"/health", nil)
-	if err != nil {
-		return err
-	}
-	resp, err := e.sys.Do(req)
-	var dial *net.OpError
-	if errors.As(err, &dial) && dial.Op == "dial" {
-		return &failure{msg: "the agent is not running", hints: []string{"Start it: printpipe start"}}
-	}
-	if err != nil {
-		return portBusy(port)
-	}
-	defer resp.Body.Close()
-	var health struct{ Name string }
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&health) != nil || health.Name != "printpipe" {
-		return portBusy(port)
-	}
-	return nil
-}
-
-func portBusy(port int) error {
-	return &failure{
-		msg: fmt.Sprintf("port %d is used by another program", port),
-		hints: []string{
-			"Close that program and run the same command again.",
-			fmt.Sprintf("Windows: netstat -ano | findstr :%d   macOS/Linux: lsof -i :%d", port, port),
-		},
-	}
 }
 
 // labelNotSent is the test label failing with the agent up: hints say what

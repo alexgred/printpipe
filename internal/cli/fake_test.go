@@ -20,8 +20,12 @@ import (
 // memory, a listener on a free port, a clock that stands still, and whatever
 // answers on the agent's port.
 type fakeSystem struct {
+	goos      string
+	home      string
 	configDir string
-	files     map[string][]byte
+	// executable is the path of the running printpipe.
+	executable string
+	files      map[string][]byte
 	// listened is the address the server asked for; the fake listens on a
 	// free port instead.
 	listened string
@@ -42,6 +46,15 @@ type fakeSystem struct {
 	deviceErr map[string]error
 	// written is what each device file got.
 	written map[string][]byte
+	// spawned is each detached program started, name and arguments joined by
+	// spaces; onSpawn is what starting one does.
+	spawned []string
+	onSpawn func()
+	// terminated is each pid sent SIGTERM; onTerminate is what that does.
+	terminated  []int
+	onTerminate func()
+	// exes is the program file of each process that this user can see.
+	exes map[int]string
 }
 
 // ranProgram is one program the CLI ran.
@@ -52,13 +65,17 @@ type ranProgram struct {
 
 func newFakeSystem() *fakeSystem {
 	return &fakeSystem{
-		configDir: "/home/me/.config",
-		files:     map[string][]byte{},
-		listening: make(chan net.Listener, 1),
-		now:       time.Date(2026, 11, 3, 20, 15, 4, 0, time.UTC),
-		programs:  map[string]func(args []string) ([]byte, error){},
-		deviceErr: map[string]error{},
-		written:   map[string][]byte{},
+		goos:       "linux",
+		home:       "/home/me",
+		configDir:  "/home/me/.config",
+		executable: "/home/me/.local/bin/printpipe",
+		files:      map[string][]byte{},
+		listening:  make(chan net.Listener, 1),
+		now:        time.Date(2026, 11, 3, 20, 15, 4, 0, time.UTC),
+		programs:   map[string]func(args []string) ([]byte, error){},
+		deviceErr:  map[string]error{},
+		written:    map[string][]byte{},
+		exes:       map[int]string{},
 	}
 }
 
@@ -84,7 +101,78 @@ func (s *fakeSystem) ReadDir(name string) ([]string, error) {
 	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 }
 
-func (s *fakeSystem) ConfigDir() (string, error) { return s.configDir, nil }
+func (s *fakeSystem) GOOS() string                  { return s.goos }
+func (s *fakeSystem) HomeDir() (string, error)      { return s.home, nil }
+func (s *fakeSystem) ConfigDir() (string, error)    { return s.configDir, nil }
+func (s *fakeSystem) LocalAppData() (string, error) { return s.home + `\AppData\Local`, nil }
+func (s *fakeSystem) Executable() (string, error)   { return s.executable, nil }
+
+func (s *fakeSystem) WriteFile(name string, data []byte) error {
+	s.files[name] = data
+	return nil
+}
+
+func (s *fakeSystem) Remove(name string) error {
+	if _, ok := s.files[name]; !ok {
+		return &fs.PathError{Op: "remove", Path: name, Err: fs.ErrNotExist}
+	}
+	delete(s.files, name)
+	return nil
+}
+
+func (s *fakeSystem) Rename(from, to string) error {
+	b, ok := s.files[from]
+	if !ok {
+		return &fs.PathError{Op: "rename", Path: from, Err: fs.ErrNotExist}
+	}
+	s.files[to] = b
+	delete(s.files, from)
+	return nil
+}
+
+func (s *fakeSystem) OpenAppend(name string) (io.WriteCloser, int64, error) {
+	return fakeAppender{s, name}, int64(len(s.files[name])), nil
+}
+
+// fakeAppender adds what is written to a file of the fake.
+type fakeAppender struct {
+	s    *fakeSystem
+	name string
+}
+
+func (a fakeAppender) Write(p []byte) (int, error) {
+	a.s.files[a.name] = append(a.s.files[a.name], p...)
+	return len(p), nil
+}
+
+func (a fakeAppender) Close() error { return nil }
+
+func (s *fakeSystem) Spawn(name string, args ...string) error {
+	s.spawned = append(s.spawned, strings.Join(append([]string{name}, args...), " "))
+	if s.onSpawn != nil {
+		s.onSpawn()
+	}
+	return nil
+}
+
+func (s *fakeSystem) Terminate(pid int) error {
+	s.terminated = append(s.terminated, pid)
+	if s.onTerminate != nil {
+		s.onTerminate()
+	}
+	return nil
+}
+
+func (s *fakeSystem) ProcessExe(pid int) (string, error) {
+	exe, ok := s.exes[pid]
+	if !ok {
+		return "", fs.ErrPermission
+	}
+	return exe, nil
+}
+
+// Sleep moves the clock on, so that a test waiting for the agent ends at once.
+func (s *fakeSystem) Sleep(d time.Duration) { s.now = s.now.Add(d) }
 
 func (s *fakeSystem) ReadFile(name string) ([]byte, error) {
 	b, ok := s.files[name]

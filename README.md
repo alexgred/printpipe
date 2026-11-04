@@ -4,15 +4,23 @@ A small agent for the computer a label printer is plugged into. Web pages in tha
 
 The same binary is the `printpipe` command and the background agent.
 
-> Work in progress: the first release will be v0.2.0. Installing, the background service and most commands are not there yet.
+> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux only so far.
 
 ## Commands
 
 ```
 printpipe help        list the commands
 printpipe version     print the version (offline)
+printpipe start       start the agent in the background
+printpipe stop        stop the agent
+printpipe restart     restart the agent, or start it when it is stopped
+printpipe startup [on|off]  show, or turn on or off, starting the agent at login
 printpipe test-print  print the built-in test label through the running agent
 ```
+
+`start` on a running agent and `stop` on a stopped one just say so and succeed. `start` and `startup` are independent: turning starting at login on does not start the agent, and turning it off does not stop it. The agent is found only by its port, through `/health`; if another program answers there, printpipe says so and leaves it alone.
+
+On Linux the agent is the systemd user unit `printpipe.service` in `~/.config/systemd/user/`, which runs the `printpipe` that wrote it: `start`, `stop` and `restart` are `systemctl --user`, and `startup` is `enable` and `disable`. Without a user systemd manager the agent is a detached child that `stop` ends with SIGTERM, once `/proc` shows that the process is printpipe, and starting at login is an entry in `~/.config/autostart/`.
 
 `test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 58×40 mm); `--size W,H` in mm, such as `--size 40,30`, sets another.
 
@@ -32,6 +40,16 @@ printpipe test-print  print the built-in test label through the running agent
 On macOS and Linux printpipe prints through a CUPS queue with `lp -o raw`, so nothing changes the job's bytes. On Linux a `device` without `usb:` is written to directly; that needs membership of the `lp` group (`sudo usermod -aG lp $USER`, then log out and back in).
 
 On Windows printpipe writes straight to the USB printer, with no driver, no queue and no admin rights. A `usb:` device is found again on every job by its IDs, so another USB port or a replaced unit of the same model just works; the serial is needed only when several identical printers are connected (`printer_ambiguous` otherwise).
+
+## Files
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Binary | `%LOCALAPPDATA%\Programs\printpipe\printpipe.exe` | `~/.local/bin/printpipe` | `~/.local/bin/printpipe` |
+| Config | `%APPDATA%\printpipe\config.json` | `~/Library/Application Support/printpipe/config.json` | `~/.config/printpipe/config.json` |
+| Log | `%LOCALAPPDATA%\printpipe\agent.log` | `~/Library/Logs/printpipe.log` | `~/.local/state/printpipe/agent.log` |
+
+The agent writes its own log, on stderr too when run by hand as `printpipe serve`. At about 1 MB the log becomes the one previous file, the same name with `.1` added.
 
 ## HTTP
 

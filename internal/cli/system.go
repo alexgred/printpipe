@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -18,12 +21,36 @@ import (
 
 // System is everything of the computer the CLI touches: the file system, the
 // programs and device files printing goes through, the network, the clock,
-// and later the service manager and the releases. Run gets it injected, so
+// the processes of the agent, and later the releases. Run gets it injected, so
 // that tests drive every command against a fake.
 type System interface {
 	printer.Computer
+	// GOOS is the operating system, runtime.GOOS.
+	GOOS() string
+	// HomeDir is the user's home folder, os.UserHomeDir.
+	HomeDir() (string, error)
 	// ConfigDir is the user's configuration folder, os.UserConfigDir.
 	ConfigDir() (string, error)
+	// LocalAppData is %LOCALAPPDATA%; it is asked for on Windows only.
+	LocalAppData() (string, error)
+	// Executable is the path of the running printpipe, os.Executable.
+	Executable() (string, error)
+	// WriteFile replaces a file, creating its folder.
+	WriteFile(name string, data []byte) error
+	Remove(name string) error
+	// Rename moves a file, replacing what is at to.
+	Rename(from, to string) error
+	// OpenAppend opens a file to add to, creating it and its folder, and
+	// returns its size.
+	OpenAppend(name string) (io.WriteCloser, int64, error)
+	// Spawn starts a program that outlives this one: in its own session, with
+	// no terminal.
+	Spawn(name string, args ...string) error
+	// Terminate asks a process to exit, SIGTERM.
+	Terminate(pid int) error
+	// ProcessExe is the program file a process runs, when this user may see it.
+	ProcessExe(pid int) (string, error)
+	Sleep(d time.Duration)
 	// Listen opens the server's TCP listener on addr.
 	Listen(addr string) (net.Listener, error)
 	// Do sends an HTTP request, such as one to the running agent.
@@ -37,11 +64,41 @@ type OS struct{}
 // client waits longer than the agent's own ~10 s for a printer to take a job.
 var client = &http.Client{Timeout: 30 * time.Second}
 
+func (OS) GOOS() string                                 { return runtime.GOOS }
+func (OS) HomeDir() (string, error)                     { return os.UserHomeDir() }
 func (OS) ConfigDir() (string, error)                   { return os.UserConfigDir() }
+func (OS) LocalAppData() (string, error)                { return os.UserCacheDir() }
+func (OS) Executable() (string, error)                  { return os.Executable() }
 func (OS) ReadFile(name string) ([]byte, error)         { return os.ReadFile(name) }
+func (OS) Remove(name string) error                     { return os.Remove(name) }
+func (OS) Rename(from, to string) error                 { return os.Rename(from, to) }
 func (OS) Listen(addr string) (net.Listener, error)     { return net.Listen("tcp", addr) }
 func (OS) Do(req *http.Request) (*http.Response, error) { return client.Do(req) }
 func (OS) Now() time.Time                               { return time.Now() }
+func (OS) Sleep(d time.Duration)                        { time.Sleep(d) }
+
+func (OS) WriteFile(name string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(name, data, 0o644)
+}
+
+func (OS) OpenAppend(name string) (io.WriteCloser, int64, error) {
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return nil, 0, err
+	}
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, err
+	}
+	return f, info.Size(), nil
+}
 
 func (OS) Run(ctx context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
