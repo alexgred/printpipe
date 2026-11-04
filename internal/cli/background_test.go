@@ -289,14 +289,12 @@ func TestStartupRefusesAnythingButOnOrOff(t *testing.T) {
 	}
 }
 
-// Only Linux has a service manager wired in so far.
-func TestOtherOperatingSystemsSayItIsNotThereYet(t *testing.T) {
-	for _, goos := range []string{"darwin", "windows"} {
-		for _, command := range []string{"start", "stop", "restart", "startup"} {
-			sys := newFakeSystem()
-			sys.goos = goos
-			wantFailure(t, run(t, sys, command), "error: printpipe "+command+" is not implemented yet on this OS\n")
-		}
+// macOS has no service wired in so far.
+func TestMacOSSaysItIsNotThereYet(t *testing.T) {
+	for _, command := range []string{"start", "stop", "restart", "startup"} {
+		sys := newFakeSystem()
+		sys.goos = "darwin"
+		wantFailure(t, run(t, sys, command), "error: printpipe "+command+" is not implemented yet on this OS\n")
 	}
 }
 
@@ -484,5 +482,236 @@ func TestWithAManagerStartupAlsoSeesAnEarlierAutostartEntry(t *testing.T) {
 	wantOutput(t, run(t, sys, "startup", "off"), "Starts at login: off\n")
 	if _, left := sys.files[autostartPath]; left {
 		t.Error("the entry is still there")
+	}
+}
+
+const windowsExe = `C:\Users\me\AppData\Local\Programs\printpipe\printpipe.exe`
+
+// onWindows is a Windows PC whose agent, once spawned, exits when asked to.
+func onWindows() *fakeSystem {
+	sys := newFakeSystem()
+	sys.goos = "windows"
+	sys.home = `C:\Users\me`
+	sys.configDir = `C:\Users\me\AppData\Roaming`
+	sys.executable = windowsExe
+	sys.onSpawn = func() { runWindowsAgent(sys) }
+	return sys
+}
+
+// runWindowsAgent runs the agent as a process of the installed printpipe, which
+// exits when told to through its stop event.
+func runWindowsAgent(sys *fakeSystem) {
+	sys.runAgent(&fakePrinter{})
+	sys.exes[agentPID] = windowsExe
+	sys.onTerminate = func() { sys.onPort = nil }
+}
+
+func TestOnWindowsStartSpawnsTheHiddenAgent(t *testing.T) {
+	sys := onWindows()
+
+	wantOutput(t, run(t, sys, "start"), "Agent started, version dev\n")
+	if !slices.Equal(sys.spawned, []string{windowsExe + " serve"}) {
+		t.Errorf("spawned %q", sys.spawned)
+	}
+	if len(sys.ran) != 0 {
+		t.Errorf("ran %q", sys.ranCommands())
+	}
+}
+
+func TestOnWindowsStartOnARunningAgentJustSaysSo(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+
+	wantOutput(t, run(t, sys, "start"), "already running, version dev\n")
+	if len(sys.spawned) != 0 {
+		t.Errorf("spawned %q", sys.spawned)
+	}
+}
+
+func TestOnWindowsStartPointsAtTheLogWhenTheAgentDoesNotAnswer(t *testing.T) {
+	sys := onWindows()
+	sys.onSpawn = nil
+
+	wantFailure(t, run(t, sys, "start"), "error: the agent did not answer within 10 s\n"+
+		`  Log: C:\Users\me\AppData\Local\printpipe\agent.log`+"\n")
+}
+
+func TestOnWindowsStopAsksTheAgentThroughItsEventAndKillsNothing(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	if !slices.Equal(sys.terminated, []int{agentPID}) {
+		t.Errorf("asked %v to exit, want the agent", sys.terminated)
+	}
+	if len(sys.killed) != 0 {
+		t.Errorf("killed %v", sys.killed)
+	}
+}
+
+func TestOnWindowsStopKillsAnAgentThatIgnoresItsEvent(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.onTerminate = nil
+	sys.onKill = func() { sys.onPort = nil }
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	if !slices.Equal(sys.killed, []int{agentPID}) {
+		t.Errorf("killed %v, want the agent", sys.killed)
+	}
+}
+
+// No event to signal is an agent that could not make one: it would never exit
+// by itself, so there is nothing to wait for.
+func TestOnWindowsStopKillsAtOnceAnAgentWithNoEvent(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.terminateErr = errors.New("The system cannot find the file specified.")
+	sys.onKill = func() { sys.onPort = nil }
+	before := sys.now
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+	if !slices.Equal(sys.killed, []int{agentPID}) {
+		t.Errorf("killed %v, want the agent", sys.killed)
+	}
+	if !sys.now.Equal(before) {
+		t.Errorf("waited %v before the kill", sys.now.Sub(before))
+	}
+}
+
+func TestOnWindowsStopSaysSoWhenTheAgentSurvivesTheKill(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.onTerminate = nil
+
+	wantFailure(t, run(t, sys, "stop"), "error: the agent (pid 4242) did not stop within 10 s\n")
+}
+
+func TestOnWindowsStopReportsAKillThatFails(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.onTerminate = nil
+	sys.killErr = errors.New("Access is denied.")
+
+	wantFailure(t, run(t, sys, "stop"), "error: Access is denied.\n")
+}
+
+// /health only says what the answering program claims.
+func TestOnWindowsStopNeverTouchesAProcessThatIsNotPrintpipe(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.exes[agentPID] = `C:\Program Files\Other\other.exe`
+
+	wantFailure(t, run(t, sys, "stop"), `error: process 4242 on port 8631 runs C:\Program Files\Other\other.exe, not this printpipe`+"\n"+
+		"  Close that program and run the same command again.\n")
+	if len(sys.terminated)+len(sys.killed) != 0 {
+		t.Errorf("asked %v to exit, killed %v", sys.terminated, sys.killed)
+	}
+}
+
+// The wait for the event is long enough for another program to have taken the
+// port's pid: the check is made again right before the kill.
+func TestOnWindowsStopChecksTheProgramAgainBeforeTheKill(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.onTerminate = func() { sys.exes[agentPID] = `C:\Program Files\Other\other.exe` }
+
+	got := run(t, sys, "stop")
+	if got.code != 1 || !strings.Contains(got.stderr, "not this printpipe") {
+		t.Errorf("got %+v, want it refused", got)
+	}
+	if len(sys.killed) != 0 {
+		t.Errorf("killed %v", sys.killed)
+	}
+}
+
+// Windows' file names do not care about case, and the two ways of asking for
+// a program's path need not agree on it.
+func TestOnWindowsTheProgramFileIsComparedWithoutCase(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+	sys.exes[agentPID] = strings.ToUpper(windowsExe)
+
+	wantOutput(t, run(t, sys, "stop"), "Agent stopped\n")
+}
+
+func TestOnLinuxTheProgramFileIsComparedWithCase(t *testing.T) {
+	sys := noManager()
+	runStrayAgent(sys)
+	sys.exes[agentPID] = strings.ToUpper(installedExe)
+
+	got := run(t, sys, "stop")
+	if got.code != 1 || !strings.Contains(got.stderr, "not this printpipe") {
+		t.Errorf("got %+v, want it refused", got)
+	}
+}
+
+func TestOnWindowsStopReportsAnotherUsersAgentWithItsPID(t *testing.T) {
+	sys := onWindows()
+	sys.runAgent(&fakePrinter{}) // a process this user may not look at
+
+	wantFailure(t, run(t, sys, "stop"), "error: could not check process 4242 on port 8631: permission denied\n"+
+		"  It may be another user's agent.\n")
+}
+
+func TestOnWindowsStopOnAStoppedAgentJustSaysSo(t *testing.T) {
+	wantOutput(t, run(t, onWindows(), "stop"), "not running\n")
+}
+
+func TestOnWindowsRestartStopsAndSpawns(t *testing.T) {
+	sys := onWindows()
+	runWindowsAgent(sys)
+
+	wantOutput(t, run(t, sys, "restart"), "Agent restarted, version dev\n")
+	if !slices.Equal(sys.terminated, []int{agentPID}) || len(sys.spawned) != 1 {
+		t.Errorf("asked %v to exit, spawned %q", sys.terminated, sys.spawned)
+	}
+}
+
+func TestOnWindowsRestartOnAStoppedAgentStartsIt(t *testing.T) {
+	sys := onWindows()
+
+	wantOutput(t, run(t, sys, "restart"), "Agent started, version dev\n")
+	if len(sys.spawned) != 1 {
+		t.Errorf("spawned %q", sys.spawned)
+	}
+}
+
+// startup and start are independent: neither turns the other on or off.
+func TestOnWindowsStartupIsARunValueThatStartsTheAgent(t *testing.T) {
+	sys := onWindows()
+
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+	wantOutput(t, run(t, sys, "startup", "on"), "Starts at login: on\n")
+	if got, want := sys.runValues["printpipe"], `"`+windowsExe+`" start`; got != want {
+		t.Errorf("the value runs %q, want %q", got, want)
+	}
+	if len(sys.spawned) != 0 {
+		t.Error("startup on started the agent")
+	}
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: on\n")
+
+	runWindowsAgent(sys)
+	wantOutput(t, run(t, sys, "startup", "off"), "Starts at login: off\n")
+	if _, left := sys.runValues["printpipe"]; left {
+		t.Error("the value is still there")
+	}
+	if sys.onPort == nil || len(sys.terminated)+len(sys.killed) != 0 {
+		t.Error("startup off stopped the agent")
+	}
+	wantOutput(t, run(t, sys, "startup"), "Starts at login: off\n")
+}
+
+func TestOnWindowsStartupOffWithNoValueSucceeds(t *testing.T) {
+	wantOutput(t, run(t, onWindows(), "startup", "off"), "Starts at login: off\n")
+}
+
+func TestOnWindowsStartupReportsARegistryThatRefuses(t *testing.T) {
+	for _, state := range []string{"on", "off"} {
+		sys := onWindows()
+		sys.runValues["printpipe"] = "something"
+		sys.runValueErr = errors.New("Access is denied.")
+
+		wantFailure(t, run(t, sys, "startup", state), "error: Access is denied.\n")
 	}
 }

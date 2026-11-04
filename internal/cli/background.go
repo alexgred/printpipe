@@ -24,8 +24,10 @@ type runningAgent struct {
 }
 
 // healthTimeout is far above a healthy agent's answer, and well below the
-// client's wait for one that is printing.
-const healthTimeout = 2 * time.Second
+// client's wait for one that is printing. It is also well above the 2 s or so
+// that Windows takes to refuse a connection to a closed port: cut short, that
+// would look like a program on the port.
+const healthTimeout = 5 * time.Second
 
 // findAgent asks the port who answers, the only way the agent is ever found.
 // It is nil when nothing listens, and another program answering is an error,
@@ -89,7 +91,11 @@ const agentWaitSeconds = 10
 
 // serviceOf is the service of this computer.
 func serviceOf(e env, command string) (service, error) {
-	if e.sys.GOOS() != "linux" {
+	switch e.sys.GOOS() {
+	case "linux":
+	case "windows":
+		return windows{}, nil
+	default:
 		return nil, &failure{msg: fmt.Sprintf("printpipe %s is not implemented yet on this OS", command)}
 	}
 	if _, err := e.sys.Run(e.ctx, nil, "systemctl", "--user", "show-environment"); err == nil {
@@ -245,9 +251,9 @@ func agentExe(e env, port, pid int) (string, error) {
 	return exe, nil
 }
 
-// terminate asks the agent with this pid to exit, once its program file shows
-// that it is printpipe: the pid comes from whatever answered on the port.
-func terminate(e env, port, pid int) error {
+// checkOwnAgent fails unless the process with this pid runs printpipe, by its
+// program file: the pid comes from whatever answered on the port.
+func checkOwnAgent(e env, port, pid int) error {
 	exe, err := agentExe(e, port, pid)
 	if err != nil {
 		return err
@@ -260,18 +266,30 @@ func terminate(e env, port, pid int) error {
 	if err != nil {
 		return err
 	}
-	if exe != own && exe != files.Binary {
+	same := func(a, b string) bool { return a == b }
+	if e.sys.GOOS() == "windows" {
+		same = strings.EqualFold
+	}
+	if !same(exe, own) && !same(exe, files.Binary) {
 		return &failure{
 			msg:   fmt.Sprintf("process %d on port %d runs %s, not this printpipe", pid, port, exe),
 			hints: []string{"Close that program and run the same command again."},
 		}
 	}
+	return nil
+}
+
+// terminate asks the agent with this pid to exit, once it shows to be printpipe.
+func terminate(e env, port, pid int) error {
+	if err := checkOwnAgent(e, port, pid); err != nil {
+		return err
+	}
 	return e.sys.Terminate(pid)
 }
 
-// replaceByHand ends the agent with this pid and starts svc's in its place.
+// replaceByHand stops the agent with this pid and starts svc's in its place.
 func replaceByHand(e env, svc service, port, pid int) error {
-	if err := terminate(e, port, pid); err != nil {
+	if err := svc.stop(e, port, pid); err != nil {
 		return err
 	}
 	if err := waitForAgentGone(e, port); err != nil {
@@ -472,3 +490,55 @@ func (detached) setStartup(e env, on bool) error {
 }
 
 func (detached) startsAtLogin(e env) bool { return hasAutostart(e) }
+
+// windows is a PC with Windows: the agent is a process with no console, found
+// again by its port.
+type windows struct{}
+
+func (windows) start(e env) error { return detached{}.start(e) }
+
+// stop asks the agent to exit through its event, then ends it by force. An
+// agent that goes off its port has stopped, though it may finish a job first.
+// With no event to signal, from another logon session or for an agent that
+// could not make one, there is nothing to wait for. After a wait the process is
+// checked again before the kill: the wait is long, and the port may have a new
+// owner.
+func (windows) stop(e env, port, pid int) error {
+	if err := checkOwnAgent(e, port, pid); err != nil {
+		return err
+	}
+	if e.sys.Terminate(pid) != nil {
+		return e.sys.Kill(pid)
+	}
+	agent, err := pollAgent(e, port, func(a *runningAgent) bool { return a == nil })
+	if err != nil || agent == nil {
+		return err
+	}
+	if err := checkOwnAgent(e, port, agent.PID); err != nil {
+		return err
+	}
+	return e.sys.Kill(agent.PID)
+}
+
+func (w windows) restart(e env, port, pid int) error {
+	return replaceByHand(e, w, port, pid)
+}
+
+// runValue is the agent's value in the user's HKCU Run key.
+const runValue = "printpipe"
+
+func (windows) setStartup(e env, on bool) error {
+	if !on {
+		if err := e.sys.DeleteRunValue(runValue); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	exe, err := e.sys.Executable()
+	if err != nil {
+		return err
+	}
+	return e.sys.SetRunValue(runValue, `"`+exe+`" start`)
+}
+
+func (windows) startsAtLogin(e env) bool { return e.sys.HasRunValue(runValue) }

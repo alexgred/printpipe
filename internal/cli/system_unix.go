@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,3 +29,12 @@ func (OS) ProcessExe(pid int) (string, error) {
 	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	return strings.TrimSuffix(exe, " (deleted)"), err
 }
+
+// StopRequests is never closed: SIGTERM asks a process to exit here.
+func (OS) StopRequests() (<-chan struct{}, error) { return nil, nil }
+
+// Only Windows has a Run key.
+
+func (OS) HasRunValue(string) bool          { return false }
+func (OS) SetRunValue(string, string) error { return errors.ErrUnsupported }
+func (OS) DeleteRunValue(string) error      { return errors.ErrUnsupported }

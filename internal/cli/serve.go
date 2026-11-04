@@ -72,16 +72,25 @@ func runServer(e env, logger *log.Logger) error {
 	}
 	logger.Printf("printpipe %s on http://%s, printer: %s, origins %v", Version, addr, desc, cfg.Origins)
 
+	// Opened only now, so that an agent that could not get the port takes no
+	// stop request meant for the one that has it, and before /health can answer.
+	stopRequests, err := e.sys.StopRequests()
+	if err != nil {
+		logger.Printf("no stop event, stop will have to kill the agent: %v", err)
+	}
+
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(l) }()
 	select {
 	case err := <-served:
 		return err
+	case <-stopRequests:
+		logger.Print("asked to stop")
 	case <-e.ctx.Done():
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(ctx)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return srv.Shutdown(ctx)
 }
 
 // filesOf is where printpipe keeps its files on this computer.

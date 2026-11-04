@@ -63,6 +63,25 @@ On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/
 
 Checked without a real manager: on 2026-11-04 steps 1, 3, 4, 5 (`startup` only) and 8 of the detached child, with `systemctl` off the `PATH`, a separate `HOME` and another port; `systemd-analyze verify` accepts the unit. Not run yet: everything through a real `systemctl --user`.
 
+## Windows: running in the background
+
+On a Windows 11 PC as an ordinary user (no admin), with a usable `%APPDATA%\printpipe\config.json` and `printpipe.exe` in a folder of its own (nothing else answering on the port). Note the build of Windows (`winver`): 24H2 is build 26100.
+
+1. Before anything else, in PowerShell: `.\printpipe.exe version` prints the version, and `$LASTEXITCODE` is `0`: the manifest neither stops the program from starting nor takes its console from it.
+2. `.\printpipe.exe start` says `Agent started, version X`, with no new window and no console in the taskbar. It takes no longer than a few seconds, and a stopped agent is not reported as `port 8631 is used by another program` (a closed port takes Windows about 2 s to refuse). A second `start` says `already running, version X`.
+3. Close the terminal. Open another: `.\printpipe.exe test-print` still prints. In Task Manager `printpipe.exe` runs with no window.
+4. `.\printpipe.exe restart` says `Agent restarted, version X`, and `/health` answers a new `pid`.
+5. `.\printpipe.exe stop` says `Agent stopped` within a few seconds, and the last line of `%LOCALAPPDATA%\printpipe\agent.log` is `asked to stop`: the stop event worked. A second `stop` says `not running`. `restart` now starts it.
+6. The force-kill: a build from before the stop event has none to signal. Build commit `8f9245f` for Windows, copy it to `%LOCALAPPDATA%\Programs\printpipe\printpipe.exe`, and run `serve` with it in one window. From the new build in its own folder, `stop` says `Agent stopped` within a few seconds, that window's `serve` is gone, and the log has no `asked to stop`.
+7. In an `ssh` session, if the PC runs OpenSSH Server: `start` works, and the agent survives closing the session.
+8. `.\printpipe.exe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v printpipe` shows `"<path>\printpipe.exe" start`. Log out and back in: the agent runs, with no window (on a build before 24H2, a short flash is accepted; note what is seen). `startup off` leaves it running, the value is gone, and after another login it does not run. No step asked for UAC.
+9. With the agent stopped, `python -m http.server 8631 --bind 127.0.0.1`: `start`, `stop` and `restart` each say `port 8631 is used by another program`, exit 1, and the server keeps running.
+
+Checked without Windows: `make build` gives a console-subsystem binary whose `.rsrc` holds the manifest. Not run yet: everything above, none of the Win32 calls has run on a real PC.
+
+| date | Windows | build | result |
+|---|---|---|---|
+
 ## macOS: through CUPS
 
 Not run yet: needs a Mac, before printpipe is used on one. Repeat the Linux steps 1 and 2, and check that `printer.ListUSB` finds the printer: the `ioreg -r -c IOUSBHostDevice -l -w 0` output it reads is modelled on what is known of its format, not on a real Mac's output. The USB strings may also name the XP-365B as `Printer Printer-80`, as they do on Linux, since `ioreg` gives no IEEE 1284 ID. Check too that `LC_ALL=C.UTF-8 lpstat -r` says `scheduler is running`.

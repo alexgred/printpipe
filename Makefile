@@ -21,6 +21,12 @@ build: ## Build printpipe for every target into dist/
 		echo dist/printpipe-$$os-$$arch$$ext; \
 	done
 
+# rsrc is only run here, to make the resource the linker embeds in the Windows
+# binary; it is no dependency of printpipe.
+.PHONY: manifest
+manifest: ## Rebuild the Windows resource from printpipe.exe.manifest
+	go run github.com/akavel/rsrc@v0.10.2 -arch amd64 -manifest printpipe.exe.manifest -o rsrc_windows_amd64.syso
+
 .PHONY: test
 test: ## Run the tests with -race (ARGS="-run X ./internal/cli")
 	go test -race $(or $(ARGS),./...)

@@ -50,11 +50,26 @@ type fakeSystem struct {
 	// spaces; onSpawn is what starting one does.
 	spawned []string
 	onSpawn func()
-	// terminated is each pid sent SIGTERM; onTerminate is what that does.
-	terminated  []int
-	onTerminate func()
+	// terminated is each pid asked to exit; onTerminate is what that does, and
+	// terminateErr what it fails with.
+	terminated   []int
+	onTerminate  func()
+	terminateErr error
+	// killed is each pid force-killed; onKill is what that does, and killErr
+	// what it fails with.
+	killed  []int
+	onKill  func()
+	killErr error
 	// exes is the program file of each process that this user can see.
 	exes map[int]string
+	// runValues is the user's HKCU Run key; runValueErr is what changing it
+	// fails with.
+	runValues   map[string]string
+	runValueErr error
+	// stopRequests is what the agent is asked to stop through, and
+	// stopRequestsErr why it cannot be.
+	stopRequests    chan struct{}
+	stopRequestsErr error
 }
 
 // ranProgram is one program the CLI ran.
@@ -76,6 +91,7 @@ func newFakeSystem() *fakeSystem {
 		deviceErr:  map[string]error{},
 		written:    map[string][]byte{},
 		exes:       map[int]string{},
+		runValues:  map[string]string{},
 	}
 }
 
@@ -156,9 +172,23 @@ func (s *fakeSystem) Spawn(name string, args ...string) error {
 }
 
 func (s *fakeSystem) Terminate(pid int) error {
+	if s.terminateErr != nil {
+		return s.terminateErr
+	}
 	s.terminated = append(s.terminated, pid)
 	if s.onTerminate != nil {
 		s.onTerminate()
+	}
+	return nil
+}
+
+func (s *fakeSystem) Kill(pid int) error {
+	if s.killErr != nil {
+		return s.killErr
+	}
+	s.killed = append(s.killed, pid)
+	if s.onKill != nil {
+		s.onKill()
 	}
 	return nil
 }
@@ -169,6 +199,34 @@ func (s *fakeSystem) ProcessExe(pid int) (string, error) {
 		return "", fs.ErrPermission
 	}
 	return exe, nil
+}
+
+func (s *fakeSystem) StopRequests() (<-chan struct{}, error) {
+	return s.stopRequests, s.stopRequestsErr
+}
+
+func (s *fakeSystem) HasRunValue(name string) bool {
+	_, ok := s.runValues[name]
+	return ok
+}
+
+func (s *fakeSystem) SetRunValue(name, command string) error {
+	if s.runValueErr != nil {
+		return s.runValueErr
+	}
+	s.runValues[name] = command
+	return nil
+}
+
+func (s *fakeSystem) DeleteRunValue(name string) error {
+	if s.runValueErr != nil {
+		return s.runValueErr
+	}
+	if _, ok := s.runValues[name]; !ok {
+		return &fs.PathError{Op: "delete", Path: name, Err: fs.ErrNotExist}
+	}
+	delete(s.runValues, name)
+	return nil
 }
 
 // Sleep moves the clock on, so that a test waiting for the agent ends at once.

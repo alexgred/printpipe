@@ -4,7 +4,7 @@ A small agent for the computer a label printer is plugged into. Web pages in tha
 
 The same binary is the `printpipe` command and the background agent.
 
-> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux only so far.
+> Work in progress: the first release will be v0.2.0. Installing and most commands are not there yet; running in the background works on Linux and Windows so far.
 
 ## Commands
 
@@ -21,6 +21,8 @@ printpipe test-print  print the built-in test label through the running agent
 `start` on a running agent and `stop` on a stopped one just say so and succeed. `start` and `startup` are independent: turning starting at login on does not start the agent, and turning it off does not stop it. The agent is found only by its port, through `/health`; if another program answers there, printpipe says so and leaves it alone.
 
 On Linux the agent is the systemd user unit `printpipe.service` in `~/.config/systemd/user/`, which runs the `printpipe` that wrote it: `start`, `stop` and `restart` are `systemctl --user`, and `startup` is `enable` and `disable`. Without a user systemd manager the agent is a detached child that `stop` ends with SIGTERM, once `/proc` shows that the process is printpipe, and starting at login is an entry in `~/.config/autostart/`.
+
+On Windows the agent is a process with no window and no console, which outlives the terminal it was started from. `stop` signals the event `Local\printpipe-stop` for a graceful exit, then ends the process by force, once its program file shows that it is printpipe. `startup on` adds the value `printpipe` to the user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which runs the `printpipe.exe` that wrote it with `start`; none of this needs admin rights. On Windows 11 24H2 and later nothing shows at logon; older builds may flash a console window for a moment.
 
 `test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 58×40 mm); `--size W,H` in mm, such as `--size 40,30`, sets another.
 
@@ -72,4 +74,4 @@ Every answer, errors included, carries `Access-Control-Allow-Origin: <requesting
 
 ## Development
 
-Go only: `make test`, `make lint`, `make fmt`, `make build` (static binaries for Windows, macOS and Linux into `dist/`). `make dev` runs the agent in dry run with `dev.json`: each job lands in `dry-run.tspl`.
+Go only: `make test`, `make lint`, `make fmt`, `make build` (static binaries for Windows, macOS and Linux into `dist/`). `rsrc_windows_amd64.syso` is `printpipe.exe.manifest` in the form the linker embeds in the Windows binary; after changing the manifest, run `make manifest`, which needs the network once. `make dev` runs the agent in dry run with `dev.json`: each job lands in `dry-run.tspl`.

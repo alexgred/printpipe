@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -246,5 +247,46 @@ func TestServeUsesTheFilesOfItsOS(t *testing.T) {
 
 	if log := string(sys.files["/Users/me/Library/Logs/printpipe.log"]); !strings.Contains(log, "printer:") {
 		t.Errorf("no log in ~/Library/Logs: files %v", sys.files)
+	}
+}
+
+func TestServeExitsCleanlyWhenAskedToStop(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	sys.stopRequests = make(chan struct{})
+	done := make(chan result, 1)
+	go func() { done <- run(t, sys, "serve") }()
+	<-sys.listening
+
+	close(sys.stopRequests)
+	select {
+	case got := <-done:
+		if got.code != 0 {
+			t.Errorf("stopped: %+v, want exit 0", got)
+		}
+		if log := string(sys.files[logPath]); !strings.Contains(log, "asked to stop") {
+			t.Errorf("the log does not say so:\n%s", log)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not stop")
+	}
+}
+
+// Without its stop event the agent can still print, and stop still ends it by
+// force.
+func TestServeRunsOnWhenItCannotListenForStopRequests(t *testing.T) {
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{"origins": ["https://app.example"], "queue": "label"}`)
+	sys.stopRequestsErr = errors.New("Access is denied.")
+	srv := startServer(t, sys)
+
+	if body, _ := health(t, srv.url, "https://app.example"); body["name"] != "printpipe" {
+		t.Errorf("/health %v", body)
+	}
+	if got := srv.stop(); got.code != 0 {
+		t.Errorf("stopped: %+v, want exit 0", got)
+	}
+	if log := string(sys.files[logPath]); !strings.Contains(log, "no stop event, stop will have to kill the agent: Access is denied.") {
+		t.Errorf("the log does not say so:\n%s", log)
 	}
 }

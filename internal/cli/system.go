@@ -46,10 +46,22 @@ type System interface {
 	// Spawn starts a program that outlives this one: in its own session, with
 	// no terminal.
 	Spawn(name string, args ...string) error
-	// Terminate asks a process to exit, SIGTERM.
+	// Terminate asks a process to exit: SIGTERM, or on Windows the agent's stop
+	// event, which the pid plays no part in.
 	Terminate(pid int) error
+	// Kill ends a process at once.
+	Kill(pid int) error
+	// StopRequests is closed when this process is asked to exit other than by
+	// a signal: on Windows through the stop event, which it opens.
+	StopRequests() (<-chan struct{}, error)
 	// ProcessExe is the program file a process runs, when this user may see it.
 	ProcessExe(pid int) (string, error)
+	// HasRunValue, SetRunValue and DeleteRunValue are the value name in the
+	// user's HKCU Run key, whose command Windows runs at logon. They are asked
+	// for on Windows only. Deleting a value that is not there is fs.ErrNotExist.
+	HasRunValue(name string) bool
+	SetRunValue(name, command string) error
+	DeleteRunValue(name string) error
 	Sleep(d time.Duration)
 	// Listen opens the server's TCP listener on addr.
 	Listen(addr string) (net.Listener, error)
@@ -76,6 +88,15 @@ func (OS) Listen(addr string) (net.Listener, error)     { return net.Listen("tcp
 func (OS) Do(req *http.Request) (*http.Response, error) { return client.Do(req) }
 func (OS) Now() time.Time                               { return time.Now() }
 func (OS) Sleep(d time.Duration)                        { time.Sleep(d) }
+
+func (OS) Kill(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	defer p.Release()
+	return p.Kill()
+}
 
 func (OS) WriteFile(name string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
