@@ -36,3 +36,15 @@ func Parse(b []byte) (Config, error) {
 	}
 	return c, nil
 }
+
+// Encode is the configuration as config.json, for a person to read too.
+func (c Config) Encode() ([]byte, error) {
+	if c.Origins == nil {
+		c.Origins = []string{}
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}

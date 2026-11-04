@@ -9,10 +9,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/alexgred/printpipe/internal/config"
 	"github.com/alexgred/printpipe/internal/server"
 )
 
@@ -36,6 +38,11 @@ type fakeSystem struct {
 	// onPort answers the CLI's requests to 127.0.0.1; nil is nothing
 	// listening there.
 	onPort http.Handler
+	// agentPort is the only port onPort answers on, as runAgent found it in
+	// config.json; empty is any port.
+	agentPort string
+	// otherPorts answers the CLI's requests to other ports, by port.
+	otherPorts map[string]http.Handler
 	// requested is the URL of each request the CLI made.
 	requested []string
 	// programs answers the programs that are installed, by name; any other
@@ -256,7 +263,13 @@ func (s *fakeSystem) Now() time.Time { return s.now }
 
 func (s *fakeSystem) Do(req *http.Request) (*http.Response, error) {
 	s.requested = append(s.requested, req.URL.String())
-	if s.onPort == nil {
+	port := req.URL.Port()
+	if other, ok := s.otherPorts[port]; ok {
+		rec := httptest.NewRecorder()
+		other.ServeHTTP(rec, req)
+		return rec.Result(), nil
+	}
+	if s.onPort == nil || (s.agentPort != "" && s.agentPort != port) {
 		return nil, &url.Error{Op: req.Method, URL: req.URL.String(), Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}
 	}
 	rec := httptest.NewRecorder()
@@ -279,15 +292,23 @@ func (p *fakePrinter) Print(_ context.Context, job []byte) error {
 	return nil
 }
 
-// runAgent makes a printpipe agent answer on the port, allowing origins and
-// printing to p.
+// runAgent makes a printpipe agent answer on the port config.json names now,
+// and keep it until it runs again, allowing origins and printing to p.
 func (s *fakeSystem) runAgent(p *fakePrinter, origins ...string) {
 	s.onPort = server.Handler(server.Options{Version: "dev", PID: 4242, Origins: origins}, p)
+	s.agentPort = strconv.Itoa(config.DefaultPort)
+	if files, err := filesOf(s); err == nil {
+		if cfg, err := config.Parse(s.files[files.Config]); err == nil {
+			s.agentPort = strconv.Itoa(cfg.Port)
+		}
+	}
 }
 
 // runForeignProgram makes another program answer on the port.
 func (s *fakeSystem) runForeignProgram() {
-	s.onPort = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "<html>hello</html>")
-	})
+	s.onPort = foreignProgram
 }
+
+var foreignProgram = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	_, _ = io.WriteString(w, "<html>hello</html>")
+})

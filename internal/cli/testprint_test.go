@@ -46,6 +46,7 @@ func TestTestPrintSendsTheTestLabelThroughTheAgent(t *testing.T) {
 func TestTestPrintGoesToTheConfiguredPort(t *testing.T) {
 	sys, _ := newPrinting(t)
 	sys.files[configPath] = []byte(`{"port": 9100, "origins": ["` + app + `"], "queue": "label"}`)
+	sys.agentPort = "9100"
 	if got := run(t, sys, "test-print"); got.code != 0 {
 		t.Fatalf("got %+v, want exit 0", got)
 	}

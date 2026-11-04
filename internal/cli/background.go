@@ -182,7 +182,13 @@ func restart(e env) error {
 	if err := svc.restart(e, cfg.Port, agent.PID); err != nil {
 		return err
 	}
-	if agent, err = waitForAgent(e, cfg.Port); err != nil {
+	return sayRestarted(e, cfg.Port)
+}
+
+// sayRestarted waits for the agent that replaced the old one, on its port.
+func sayRestarted(e env, port int) error {
+	agent, err := waitForAgent(e, port)
+	if err != nil {
 		return err
 	}
 	return e.say("Agent restarted, version %s", agent.Version)

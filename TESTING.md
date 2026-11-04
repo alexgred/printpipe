@@ -63,6 +63,18 @@ On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/
 
 Checked without a real manager: on 2026-11-04 steps 1, 3, 4, 5 (`startup` only) and 8 of the detached child, with `systemctl` off the `PATH`, a separate `HOME` and another port; `systemd-analyze verify` accepts the unit. Not run yet: everything through a real `systemctl --user`.
 
+## `config` with a running agent
+
+On each OS as an ordinary user, with a usable config, the agent running and nothing else on port 8631 or 9100:
+
+1. `printpipe config` shows the port, origins, queue and device.
+2. `printpipe config --origin https://b.example` says `Origins: added https://b.example` and `Agent restarted, version X`, and `/health` answers a new `pid`.
+3. `printpipe config --port 9100` says what changed, warns about the client's agent URL and says `Agent restarted`; `/health` now answers on 9100 and nothing answers on 8631. `printpipe config --port 8631` moves it back.
+4. With `python3 -m http.server 9100 --bind 127.0.0.1` running: `printpipe config --port 9100` says `port 9100 is used by another program`, exit 1; the agent still answers on 8631 and `config.json` is unchanged.
+5. `printpipe stop`, then `printpipe config --port 9100`: it says the agent is not running and does not start it. `printpipe start` then uses 9100.
+
+Not run yet on any OS.
+
 ## Windows: running in the background
 
 On a Windows 11 PC as an ordinary user (no admin), with a usable `%APPDATA%\printpipe\config.json` and `printpipe.exe` in a folder of its own (nothing else answering on the port). Note the build of Windows (`winver`): 24H2 is build 26100.

@@ -15,6 +15,7 @@ printpipe start       start the agent in the background
 printpipe stop        stop the agent
 printpipe restart     restart the agent, or start it when it is stopped
 printpipe startup [on|off]  show, or turn on or off, starting the agent at login
+printpipe config [flags]    show the configuration, or change it with flags
 printpipe test-print  print the built-in test label through the running agent
 ```
 
@@ -32,7 +33,19 @@ On Windows the agent is a process with no window and no console, which outlives 
 
 ## Configuration
 
-`config.json` in the user's configuration folder (`%APPDATA%\printpipe\` on Windows, `~/Library/Application Support/printpipe/` on macOS, `~/.config/printpipe/` on Linux):
+`printpipe config` shows the configuration. With flags it checks the change, writes it, says what changed and restarts a running agent as `restart` does; a stopped agent is not started, and a change that changes nothing restarts nothing.
+
+```
+--queue <name>         the printer queue, instead of a device
+--device <value>       the device, instead of a queue
+--origin <url>         add a page allowed to print; can be repeated, duplicates are ignored
+--remove-origin <url>  remove one; can be repeated, but the last origin stays
+--port <n>             the port; use only if the client's agent URL uses the same port
+```
+
+An origin is what a browser sends: the scheme and host in small letters, with no path or trailing slash, such as `https://app.example`. If the new port is taken, a running agent keeps running and nothing is written; if the agent cannot be restarted, `config.json` goes back to what it was.
+
+The settings are in `config.json` in the user's configuration folder (`%APPDATA%\printpipe\` on Windows, `~/Library/Application Support/printpipe/` on macOS, `~/.config/printpipe/` on Linux):
 
 | key | |
 |---|---|

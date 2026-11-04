@@ -21,10 +21,13 @@ type env struct {
 	stdout, stderr io.Writer
 	sys            System
 	flags          map[string]string
-	args           []string
+	// values is every value of each flag, for a flag that can be repeated;
+	// flags has the last one.
+	values map[string][]string
+	args   []string
 }
 
-// say prints one line of a command's output.
+// say prints a line, or lines joined by newlines, of a command's output.
 func (e env) say(format string, args ...any) error {
 	_, err := fmt.Fprintf(e.stdout, format+"\n", args...)
 	return err
@@ -46,7 +49,7 @@ func commands() []command {
 		{name: "stop", usage: "stop                      Stop the agent.", run: stop},
 		{name: "restart", usage: "restart                   Restart the agent, or start it when it is stopped.", run: restart},
 		{name: "startup", usage: "startup [on|off]          Show, or turn on or off, starting the agent at login.", maxArgs: 1, run: startup},
-		{name: "config", usage: "config [flags]            Show the configuration, or change it with flags."},
+		{name: "config", usage: "config [flags]            Show the configuration, or change it with flags.", flags: []string{"queue", "device", "origin", "remove-origin", "port"}, run: configure},
 		{name: "version", usage: "version                   Print the version.", run: version},
 		{name: "install", usage: "install                   Install the agent for this user, find the printer and start."},
 		{name: "upgrade", usage: "upgrade                   Install the latest release."},
@@ -93,11 +96,11 @@ func dispatch(e env, args []string) error {
 		if c.run == nil {
 			return &failure{msg: fmt.Sprintf("printpipe %s is not implemented yet", c.name)}
 		}
-		flags, positional, err := parseArgs(c, args[1:])
+		flags, values, positional, err := parseArgs(c, args[1:])
 		if err != nil {
 			return err
 		}
-		e.flags, e.args = flags, positional
+		e.flags, e.values, e.args = flags, values, positional
 		return c.run(e)
 	}
 	return usageError(fmt.Sprintf("unknown command %q", args[0]))
@@ -105,33 +108,35 @@ func dispatch(e env, args []string) error {
 
 // parseArgs reads --name value, --name=value and up to the command's maxArgs
 // positional arguments.
-func parseArgs(c command, args []string) (map[string]string, []string, error) {
+func parseArgs(c command, args []string) (map[string]string, map[string][]string, []string, error) {
 	flags := map[string]string{}
+	values := map[string][]string{}
 	var positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		name, ok := strings.CutPrefix(a, "--")
 		if !ok || name == "" {
 			if len(positional) == c.maxArgs {
-				return nil, nil, usageError(fmt.Sprintf("unexpected argument %q", a))
+				return nil, nil, nil, usageError(fmt.Sprintf("unexpected argument %q", a))
 			}
 			positional = append(positional, a)
 			continue
 		}
 		name, value, hasValue := strings.Cut(name, "=")
 		if !slices.Contains(c.flags, name) {
-			return nil, nil, usageError(fmt.Sprintf("unknown flag --%s", name))
+			return nil, nil, nil, usageError(fmt.Sprintf("unknown flag --%s", name))
 		}
 		if !hasValue {
 			if i+1 == len(args) || strings.HasPrefix(args[i+1], "--") {
-				return nil, nil, usageError(fmt.Sprintf("flag --%s needs a value", name))
+				return nil, nil, nil, usageError(fmt.Sprintf("flag --%s needs a value", name))
 			}
 			i++
 			value = args[i]
 		}
 		flags[name] = value
+		values[name] = append(values[name], value)
 	}
-	return flags, positional, nil
+	return flags, values, positional, nil
 }
 
 // usageError is wrong usage: exit 2.
