@@ -79,6 +79,22 @@ On each OS as an ordinary user, with an XP-365B on USB, a browser-downloaded bui
 
 Not run yet on any OS.
 
+## `upgrade`
+
+On each OS as an ordinary user, with an older release installed, the agent running and a printer. Run `printpipe upgrade` from the installed binary. This needs real releases on GitHub: the fake cannot show that GitHub's redirect and asset URLs are what `upgrade` expects.
+
+1. With an older release installed: `updated to Y; agent restarted`, exit 0. `printpipe status` shows both versions as Y, `/health` answers a new `pid`, and `config.json`, the queue and `startup` are as they were. No label comes out.
+2. `.printpipe.old`: gone on macOS and Linux. On Windows it may stay, held by the command that just ran, and the next upgrade that downloads anything removes it. Note which.
+3. `printpipe upgrade` again: `printpipe Y is the latest version`, exit 0, and no `pid` change.
+4. `printpipe stop`, install the older release, `printpipe upgrade`: `updated to Y; the agent is not running, it will use the new version when started`, and it stays stopped. `printpipe start` runs Y.
+5. Windows: `.printpipe.new version` runs, though the file has no `.exe`: step 1 passing shows it. Also that the running exe can be renamed, back too (step 7).
+6. Networking off: `could not reach GitHub`, exit 1, agent and binary as they were.
+7. Rollback: a build that does not come up (with the agent running, install a release whose `serve` exits at once, such as one built to fail, as the latest of a fork with `releasesURL` changed): `rolled back to X, log: <path>`, exit 1, `printpipe status` shows X running. On macOS check that launchd's `KeepAlive` did not hold the file.
+8. From a downloaded copy: `this copy of printpipe is not the installed one`, exit 1, with no network use.
+9. macOS: after step 1 the installed binary starts, with its ad-hoc signature valid: `codesign -v`, and `xattr` shows no `com.apple.quarantine`.
+
+Not run yet on any OS: no release exists yet.
+
 ## `status`
 
 On each OS as an ordinary user, with printpipe installed and a usable config:

@@ -78,8 +78,8 @@ func TestWrongUsageExitsWithTwo(t *testing.T) {
 
 // The commands of later releases are listed but do nothing yet.
 func TestUnimplementedCommandSaysSo(t *testing.T) {
-	got := run(t, newFakeSystem(), "upgrade")
-	if got.code != 1 || got.stderr != "error: printpipe upgrade is not implemented yet\n" {
+	got := run(t, newFakeSystem(), "remove")
+	if got.code != 1 || got.stderr != "error: printpipe remove is not implemented yet\n" {
 		t.Errorf("got %+v, want exit 1 and the not implemented error", got)
 	}
 }

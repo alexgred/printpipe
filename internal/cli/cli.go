@@ -26,7 +26,7 @@ type env struct {
 	values map[string][]string
 	args   []string
 	// program is what the agent is started from when that is not this copy:
-	// install has placed the program that is to run.
+	// install or upgrade has placed the program that is to run.
 	program string
 }
 
@@ -64,7 +64,7 @@ func commands() []command {
 		{name: "config", usage: "config [flags]            Show the configuration, or change it with flags.", flags: []string{"queue", "device", "origin", "remove-origin", "port"}, run: configure},
 		{name: "version", usage: "version                   Print the version.", run: version},
 		{name: "install", usage: "install [flags]           Install the agent for this user, find the printer, start and print a test label.", flags: []string{"origin", "queue", "device", "port", "size"}, switches: []string{"no-test-print"}, run: install},
-		{name: "upgrade", usage: "upgrade                   Install the latest release."},
+		{name: "upgrade", usage: "upgrade                   Install the latest release.", run: upgrade},
 		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too."},
 		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files.", run: status},
 		{name: "test-print", usage: "test-print [--size W,H]   Print the built-in test label.", flags: []string{"size"}, run: testPrint},

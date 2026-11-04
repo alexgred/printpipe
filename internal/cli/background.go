@@ -474,8 +474,16 @@ func (d systemd) stop(e env, port, pid int) error {
 	return err
 }
 
-// A unit that exited with 1 stays down.
-func (systemd) stopStarting(env) error { return nil }
+// stopStarting leaves a unit that exited with 1, which stays down, and stops one
+// that runs without answering: starting it again would do nothing.
+func (d systemd) stopStarting(e env) error {
+	// A unit with no process has the main pid 0.
+	if down, err := d.runsAgent(e, 0); err != nil || down {
+		return err
+	}
+	_, err := d.systemctl(e, "stop", unitName)
+	return err
+}
 
 // restart hands an agent that is not the unit's over to the unit.
 func (d systemd) restart(e env, port, pid int) error {

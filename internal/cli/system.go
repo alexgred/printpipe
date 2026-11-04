@@ -21,12 +21,20 @@ import (
 
 // System is everything of the computer the CLI touches: the file system, the
 // programs and device files printing goes through, the network, the clock,
-// the processes of the agent, and later the releases. Run gets it injected, so
-// that tests drive every command against a fake.
+// the processes of the agent, and the web the releases are on. Run gets it
+// injected, so that tests drive every command against a fake.
 type System interface {
 	printer.Computer
 	// GOOS is the operating system, runtime.GOOS.
 	GOOS() string
+	// GOARCH is the processor architecture, runtime.GOARCH.
+	GOARCH() string
+	// Redirect is where a URL redirects to, without going there. An answer that
+	// is no redirect is an httpStatus.
+	Redirect(ctx context.Context, url string) (string, error)
+	// Download is what a URL gives, through its redirects. An answer other than
+	// 200 is an httpStatus.
+	Download(ctx context.Context, url string) ([]byte, error)
 	// UID is the user's id, os.Getuid; launchd's session is named by it.
 	UID() int
 	// HomeDir is the user's home folder, os.UserHomeDir.
@@ -87,6 +95,55 @@ type OS struct{}
 // client waits longer than the agent's own ~10 s for a printer to take a job.
 var client = &http.Client{Timeout: 30 * time.Second}
 
+// redirectClient stops at the first answer, which names the redirect.
+var redirectClient = &http.Client{
+	Timeout:       30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// downloadClient gives a release on a slow connection time to arrive: the timeout
+// also covers reading the body.
+var downloadClient = &http.Client{Timeout: 10 * time.Minute}
+
+// httpStatus is an answer that was not the one asked for: the web was reached.
+type httpStatus int
+
+func (s httpStatus) Error() string { return fmt.Sprintf("HTTP %d", int(s)) }
+
+func (OS) Redirect(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := redirectClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	location := resp.Header.Get("Location")
+	if resp.StatusCode/100 != 3 || location == "" {
+		return "", httpStatus(resp.StatusCode)
+	}
+	return location, nil
+}
+
+func (OS) Download(ctx context.Context, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := downloadClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, httpStatus(resp.StatusCode)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+func (OS) GOARCH() string                               { return runtime.GOARCH }
 func (OS) GOOS() string                                 { return runtime.GOOS }
 func (OS) UID() int                                     { return os.Getuid() }
 func (OS) HomeDir() (string, error)                     { return os.UserHomeDir() }

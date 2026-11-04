@@ -90,6 +90,18 @@ type fakeSystem struct {
 	removeErr map[string]error
 	// renameErr is what a rename to a path fails with once, by that path.
 	renameErr map[string]error
+	// redirects and downloads are the web, by URL: what a URL redirects to, and
+	// what it gives. Any other URL is a 404. offline is what reaching the web
+	// fails with, and downloadErr what only a download does.
+	redirects   map[string]string
+	downloads   map[string][]byte
+	offline     error
+	downloadErr error
+	// fetched is each URL asked of the web.
+	fetched []string
+	// buildVersions is the version an agent reports, by what the installed binary
+	// holds when it is started; "" is one that exits at once. Any other build is dev.
+	buildVersions map[string]string
 }
 
 // ranProgram is one program the CLI ran.
@@ -153,6 +165,34 @@ func (s *fakeSystem) ReadDir(name string) ([]string, error) {
 	return names, nil
 }
 
+func (s *fakeSystem) Redirect(_ context.Context, url string) (string, error) {
+	s.fetched = append(s.fetched, url)
+	if s.offline != nil {
+		return "", s.offline
+	}
+	location, ok := s.redirects[url]
+	if !ok {
+		return "", httpStatus(http.StatusNotFound)
+	}
+	return location, nil
+}
+
+func (s *fakeSystem) Download(_ context.Context, url string) ([]byte, error) {
+	s.fetched = append(s.fetched, url)
+	if s.offline != nil {
+		return nil, s.offline
+	}
+	if s.downloadErr != nil {
+		return nil, s.downloadErr
+	}
+	body, ok := s.downloads[url]
+	if !ok {
+		return nil, httpStatus(http.StatusNotFound)
+	}
+	return body, nil
+}
+
+func (s *fakeSystem) GOARCH() string                { return "amd64" }
 func (s *fakeSystem) GOOS() string                  { return s.goos }
 func (s *fakeSystem) UID() int                      { return s.uid }
 func (s *fakeSystem) HomeDir() (string, error)      { return s.home, nil }
@@ -355,7 +395,15 @@ func (p *fakePrinter) Print(_ context.Context, job []byte) error {
 // any those config.json names, as a real agent does.
 func (s *fakeSystem) runAgent(p *fakePrinter, origins ...string) {
 	s.agentPort = strconv.Itoa(config.DefaultPort)
+	version := "dev"
 	if files, err := filesOf(s); err == nil {
+		if v, ok := s.buildVersions[string(s.files[files.Binary])]; ok {
+			if v == "" {
+				s.onPort = nil
+				return
+			}
+			version = v
+		}
 		if cfg, err := config.Parse(s.files[files.Config]); err == nil {
 			s.agentPort = strconv.Itoa(cfg.Port)
 			if len(origins) == 0 {
@@ -363,7 +411,7 @@ func (s *fakeSystem) runAgent(p *fakePrinter, origins ...string) {
 			}
 		}
 	}
-	s.onPort = server.Handler(server.Options{Version: "dev", PID: 4242, Origins: origins}, p)
+	s.onPort = server.Handler(server.Options{Version: version, PID: 4242, Origins: origins}, p)
 }
 
 // runForeignProgram makes another program answer on the port.
