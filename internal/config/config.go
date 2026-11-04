@@ -20,6 +20,9 @@ type Config struct {
 	// Device is the printer's device, such as a Linux device file
 	// /dev/usb/lp0, instead of a queue.
 	Device string `json:"device,omitempty"`
+	// CreatedQueue is the CUPS queue printpipe created, the only one remove
+	// --queue may delete. It stays when Queue is changed to another.
+	CreatedQueue string `json:"created_queue,omitempty"`
 }
 
 // Default is the configuration before config.json exists.

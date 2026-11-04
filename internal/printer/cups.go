@@ -41,6 +41,30 @@ func Queues(ctx context.Context, c Computer) ([]QueueInfo, error) {
 	return queues, nil
 }
 
+// USBDeviceURIs is the USB printers CUPS can print to, such as
+// usb://Xprinter/XP-365B?serial=1. Asking CUPS's backends needs root.
+func USBDeviceURIs(ctx context.Context, c Computer) ([]string, error) {
+	out, err := c.Run(ctx, nil, "sudo", "lpinfo", "--include-schemes", "usb", "-v")
+	if err != nil {
+		return nil, err
+	}
+	var uris []string
+	for line := range strings.Lines(string(out)) {
+		if fields := strings.Fields(line); len(fields) == 2 && strings.HasPrefix(fields[1], "usb://") {
+			uris = append(uris, fields[1])
+		}
+	}
+	return uris, nil
+}
+
+// CreateQueue makes a queue that takes jobs, for this computer only, with the
+// PPD at ppdPath, never -m raw, which fails on macOS. A queue that has the name
+// already is changed.
+func CreateQueue(ctx context.Context, c Computer, name, uri, ppdPath string) error {
+	_, err := c.Run(ctx, nil, "sudo", "lpadmin", "-p", name, "-E", "-v", uri, "-P", ppdPath, "-o", "printer-is-shared=false")
+	return err
+}
+
 // errSchedulerDown is CUPS being installed but its scheduler not running.
 var errSchedulerDown = errors.New("the CUPS scheduler is not running")
 

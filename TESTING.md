@@ -46,6 +46,19 @@ Not verified yet: what `lpstat -e` does on a computer with no queue at all; whet
 | 2026-11-04 | Fedora 44 | XP-365B | the commit adding this table | Steps 2, 3, 5, 7 and 8 pass. Step 1 passes: the label came out with Cyrillic in Cyrillic, too close to the left edge, so the text moved 1 mm right. With the cover open, through the queue: `test-print` says the label should have come out and CUPS completes the job in about 8 s with no error (`XP-365B-16`). The label came out once the cover was closed, with the new margin. Steps 4 and 6 not run: the user is not in `lp`. |
 | 2026-11-04 | Fedora 44 | XP-365B | the commit adding this row | Device file, with write access given by an ACL instead of the `lp` group. Before the fix `test-print` succeeded but no label came out, cover open (6 labels) or closed (2), while `cat` to the same file printed: `os.OpenFile` had made the device non-blocking. With a blocking write step 4 prints. Step 6 not finished: with the cover open the printer took 3 labels at once, with `test-print` saying they should have come out, and all 3 came out once the cover was closed. 3 labels are too few to make it stop taking data, so the timeout was not seen. |
 
+## Linux: creating a CUPS queue
+
+On Fedora as an ordinary user, an XP-365B on USB, sudo rights, and no `config.json`. So far `install` does only its printer step, so nothing starts and no label is printed: use `lpstat -e` and `lpoptions -p <queue>`, then `printpipe serve` and `test-print` as above.
+
+1. With no queue for the printer, and if possible none at all (this also settles what `lpstat -e` does then): `printpipe install` says why it may ask, asks for the password once, and says `Printer: queue XP-365B`. `config.json` has `"queue"` and `"created_queue"`, no `.ppd` file is left beside it, `lpoptions -p XP-365B` has the printer's `device-uri` and `printer-is-shared=false`, and `ps` during the prompt shows `sudo` running `lpinfo`, not printpipe.
+2. `test-print` through that queue: the label comes out, with the Cyrillic line in Cyrillic.
+3. `printpipe install` again: no password, no new queue.
+4. `sudo lpadmin -x XP-365B`, `sudo -k`, `printpipe install` and three wrong passwords: `administrator rights were refused`, both hints, and no queue. The same with Ctrl+C at the prompt, and with no terminal (`setsid printpipe install`).
+5. The queue removed and the printer unplugged: `no label printer queue and no known printer found`, with no password asked.
+6. The queue removed, a hand-made one in its place that is not this printer's (`sudo lpadmin -p XP-365B -v ipp://localhost/none -P internal/models/xp-365b.ppd`), the printer plugged in and no `config.json`: `install` creates `XP-365B-2` and leaves the hand-made one alone.
+
+Not run yet. Not verified yet: `lpinfo` naming the printer `usb://Xprinter/XP-365B` on a computer where the `usblp` driver holds it.
+
 ## Linux: running in the background
 
 On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/.config/printpipe/config.json` and `printpipe` in `~/.local/bin` (nothing else answering on the port):
@@ -113,4 +126,4 @@ Not run yet: needs a Mac, before printpipe is used on one. As an ordinary user, 
 
 ## macOS: through CUPS
 
-Not run yet: needs a Mac, before printpipe is used on one. Repeat the Linux steps 1 and 2, and check that `printer.ListUSB` finds the printer: the `ioreg -r -c IOUSBHostDevice -l -w 0` output it reads is modelled on what is known of its format, not on a real Mac's output. The USB strings may also name the XP-365B as `Printer Printer-80`, as they do on Linux, since `ioreg` gives no IEEE 1284 ID. Check too that `LC_ALL=C.UTF-8 lpstat -r` says `scheduler is running`.
+Not run yet: needs a Mac, before printpipe is used on one. Repeat the Linux steps 1 and 2, and check that `printer.ListUSB` finds the printer: the `ioreg -r -c IOUSBHostDevice -l -w 0` output it reads is modelled on what is known of its format, not on a real Mac's output. The USB strings may also name the XP-365B as `Printer Printer-80`, as they do on Linux, since `ioreg` gives no IEEE 1284 ID. Check too that `LC_ALL=C.UTF-8 lpstat -r` says `scheduler is running`. Repeat the steps of creating a queue: `sudo lpinfo --include-schemes usb -v` must name the printer `usb://Xprinter/XP-365B`, and the minimal PPD must be taken by `lpadmin -P`; neither has been seen on a Mac.

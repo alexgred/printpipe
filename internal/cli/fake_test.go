@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -121,9 +122,22 @@ func (s *fakeSystem) WriteDevice(_ context.Context, path string, job []byte) err
 	return nil
 }
 
-// ReadDir finds nothing: no command reads a folder of the fake yet.
+// ReadDir is what the fake's files have directly under the folder.
 func (s *fakeSystem) ReadDir(name string) ([]string, error) {
-	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	var names []string
+	for path := range s.files {
+		if rest, ok := strings.CutPrefix(path, name+"/"); ok {
+			entry, _, _ := strings.Cut(rest, "/")
+			if !slices.Contains(names, entry) {
+				names = append(names, entry)
+			}
+		}
+	}
+	if names == nil {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
+	}
+	slices.Sort(names)
+	return names, nil
 }
 
 func (s *fakeSystem) GOOS() string                  { return s.goos }

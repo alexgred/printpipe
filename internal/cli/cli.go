@@ -51,7 +51,7 @@ func commands() []command {
 		{name: "startup", usage: "startup [on|off]          Show, or turn on or off, starting the agent at login.", maxArgs: 1, run: startup},
 		{name: "config", usage: "config [flags]            Show the configuration, or change it with flags.", flags: []string{"queue", "device", "origin", "remove-origin", "port"}, run: configure},
 		{name: "version", usage: "version                   Print the version.", run: version},
-		{name: "install", usage: "install                   Install the agent for this user, find the printer and start."},
+		{name: "install", usage: "install                   Install the agent for this user, find the printer and start.", run: install},
 		{name: "upgrade", usage: "upgrade                   Install the latest release."},
 		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too."},
 		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files."},

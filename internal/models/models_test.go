@@ -87,12 +87,12 @@ func TestUsableQueuesAreUSBLabelPrintersThatAcceptJobsKnownModelsFirst(t *testin
 			"xp":             "device-uri=usb://Xprinter/XP-365B?serial=1 printer-is-accepting-jobs=true",
 		},
 	}
-	queues, err := UsableQueues(context.Background(), c)
+	queues, err := printer.Queues(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
-	for _, q := range queues {
+	for _, q := range UsableQueues(queues) {
 		got = append(got, q.Name)
 	}
 	if want := []string{"xp", "dymo"}; !slices.Equal(got, want) {
@@ -105,8 +105,11 @@ func TestAUSBQueueOfAnUnknownMakeCountsAsALabelPrinterByItsDriverName(t *testing
 		order:  []string{"shop"},
 		queues: map[string]string{"shop": "device-uri=usb://ACME/P1 printer-is-accepting-jobs=true printer-make-and-model='ACME Label Printer'"},
 	}
-	queues, err := UsableQueues(context.Background(), c)
-	if err != nil || len(queues) != 1 {
-		t.Errorf("got %+v, %v; want the queue", queues, err)
+	queues, err := printer.Queues(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usable := UsableQueues(queues); len(usable) != 1 {
+		t.Errorf("got %+v; want the queue", usable)
 	}
 }

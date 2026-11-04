@@ -53,8 +53,9 @@ The settings are in `config.json` in the user's configuration folder (`%APPDATA%
 | `origins` | the pages allowed to print, such as `["https://app.example"]` |
 | `queue` | the printer queue: a CUPS queue, or an existing Windows printer's name |
 | `device` | a device instead of a queue: on Windows `usb:VID:PID[:serial]` in hex, such as `usb:1FC9:2016`; on Linux a device file such as `/dev/usb/lp0` |
+| `created_queue` | set by printpipe: the CUPS queue it created, the only one it may delete |
 
-On macOS and Linux printpipe prints through a CUPS queue with `lp -o raw`, so nothing changes the job's bytes. On Linux a `device` without `usb:` is written to directly; that needs membership of the `lp` group (`sudo usermod -aG lp $USER`, then log out and back in).
+On macOS and Linux printpipe prints through a CUPS queue with `lp -o raw`, so nothing changes the job's bytes. When no usable queue exists and a known model is connected, `install` creates one, asking for your password once: only `lpinfo` and `lpadmin` run through `sudo`, never printpipe, and a queue of yours is never changed. On Linux a `device` without `usb:` is written to directly; that needs membership of the `lp` group (`sudo usermod -aG lp $USER`, then log out and back in).
 
 On Windows printpipe writes straight to the USB printer, with no driver, no queue and no admin rights. A `usb:` device is found again on every job by its IDs, so another USB port or a replaced unit of the same model just works; the serial is needed only when several identical printers are connected (`printer_ambiguous` otherwise).
 

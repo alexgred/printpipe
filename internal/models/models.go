@@ -5,7 +5,6 @@
 package models
 
 import (
-	"context"
 	_ "embed"
 	"net/url"
 	"slices"
@@ -88,30 +87,26 @@ func ForDevice(device string) (Model, bool) {
 	return ByUSB(id.VID, id.PID)
 }
 
-// UsableQueues is the CUPS queues printpipe may print labels through: USB ones
-// that accept jobs, of a known model or calling themselves label printers.
-// Known models come first.
-func UsableQueues(ctx context.Context, c printer.Computer) ([]printer.QueueInfo, error) {
-	queues, err := printer.Queues(ctx, c)
-	if err != nil {
-		return nil, err
-	}
+// UsableQueues is those of these CUPS queues that printpipe may print labels
+// through: USB ones that accept jobs, of a known model or calling themselves
+// label printers. Known models come first.
+func UsableQueues(queues []printer.QueueInfo) []printer.QueueInfo {
 	var knownModels, labelPrinters []printer.QueueInfo
 	for _, q := range queues {
 		switch {
 		case !q.Accepting || !strings.HasPrefix(q.DeviceURI, "usb://"):
-		case slices.ContainsFunc(known, func(m Model) bool { return m.printsTo(q.DeviceURI) }):
+		case slices.ContainsFunc(known, func(m Model) bool { return m.PrintsTo(q.DeviceURI) }):
 			knownModels = append(knownModels, q)
 		case strings.Contains(strings.ToLower(q.DeviceURI+" "+q.MakeAndModel), "label"):
 			labelPrinters = append(labelPrinters, q)
 		}
 	}
-	return append(knownModels, labelPrinters...), nil
+	return append(knownModels, labelPrinters...)
 }
 
-// printsTo is whether a device URI is this model's on USB, with any serial:
+// PrintsTo is whether a device URI is this model's on USB, with any serial:
 // usb://Xprinter/XP-365B?serial=1.
-func (m Model) printsTo(uri string) bool {
+func (m Model) PrintsTo(uri string) bool {
 	device, _, _ := strings.Cut(uri, "?")
 	return strings.EqualFold(device, "usb://"+url.PathEscape(m.MFG)+"/"+url.PathEscape(m.MDL))
 }
