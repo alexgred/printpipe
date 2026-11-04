@@ -77,10 +77,11 @@ On a Windows 11 PC as an ordinary user (no admin), with a usable `%APPDATA%\prin
 8. `.\printpipe.exe startup` says `off`. `startup on` says `on`, leaves the agent as it was, and `reg query HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v printpipe` shows `"<path>\printpipe.exe" start`. Log out and back in: the agent runs, with no window (on a build before 24H2, a short flash is accepted; note what is seen). `startup off` leaves it running, the value is gone, and after another login it does not run. No step asked for UAC.
 9. With the agent stopped, `python -m http.server 8631 --bind 127.0.0.1`: `start`, `stop` and `restart` each say `port 8631 is used by another program`, exit 1, and the server keeps running.
 
-Checked without Windows: `make build` gives a console-subsystem binary whose `.rsrc` holds the manifest. Not run yet: everything above, none of the Win32 calls has run on a real PC.
+Checked without Windows: `make build` gives a console-subsystem binary whose `.rsrc` holds the manifest.
 
 | date | Windows | build | result |
 |---|---|---|---|
+| 2026-11-04 | 11, reported as the latest: 26H2, build 26300 by Microsoft's list that day; `winver` not read | 6707db2 | From PowerShell, with the XP-365B. Step 1: `version` prints; the exit code was not recorded. Step 2: `start` says `Agent started`, a second `start` says `already running`, so a stopped agent was not taken for another program, and no window appeared. `test-print` prints, with Cyrillic in Cyrillic. Step 4: `restart` says `Agent restarted`; the log has `asked to stop` and the new agent's first line in the same second; the new `pid` was not checked. Step 5: `stop` says `Agent stopped`, the log ends with `asked to stop`, a second `stop` says `not running`; `restart` on a stopped agent was not run. Also: `serve` in a terminal, then `stop` in another, ends it through the event. `startup` says `off`, `on`, `off`. Step 3: with the terminal closed the agent keeps running and printing. Step 8: with `startup on` the agent runs after logging in, and with `startup off` it does not. With `startup on`, at logon Windows shows `Open File - Security Warning` (Unknown Publisher) for `C:\Users\Alex\Downloads\printpipe-windows-amd64.exe`: the browser's `Zone.Identifier` mark on the downloaded copy: after `Unblock-File` on it and a restart, no warning at logon, and `test-print` prints. To be fixed in `install` (#11). Not reported: step 9. Not run: steps 6 (force-kill: `serve` of this build stops through the event) and 7. |
 
 ## macOS: through CUPS
 
