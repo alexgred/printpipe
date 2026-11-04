@@ -61,6 +61,21 @@ On Fedora as an ordinary user, an XP-365B on USB, sudo rights, and no `config.js
 
 Not run yet. Not verified yet: `lpinfo` naming the printer `usb://Xprinter/XP-365B` on a computer where the `usblp` driver holds it.
 
+## The one-line install
+
+`make test` runs `install.sh` through `sh` with a fake `curl`, covering its checks and failures. On 2026-11-04 those tests also passed under dash and busybox, and `install.ps1` ran under PowerShell 7 on Linux with `Invoke-WebRequest` stubbed, as one-off checks. No fake shows that GitHub serves these URLs, or how Windows PowerShell 5.1 behaves, so after publishing a release, as an ordinary user with an XP-365B on USB and nothing installed:
+
+1. Windows 11, in Windows PowerShell 5.1 (`$PSVersionTable`): the one line from the README prints one line per step, the label comes out, `$LASTEXITCODE` is `0`, and the window stays open. No UAC prompt.
+2. Windows: `Get-ChildItem $env:TEMP -Filter printpipe-*` finds nothing; `$asset` and `Say-Failure` are not defined in the session; `printpipe status` from a new terminal shows the agent running from `%LOCALAPPDATA%\Programs\printpipe`.
+3. Windows, printer unplugged after `printpipe remove`: the same line says `no known label printer is connected`, `$LASTEXITCODE` is `1`, and the window stays open. Plug it in and paste it again: the label comes out.
+4. Windows, networking off: `could not reach GitHub`, and the window stays open. Without `PRINTPIPE_ORIGIN` in a new window and no `config.json`: `--origin is needed the first time`.
+5. Fedora, in a terminal: the one line from the README prints one line per step, the label comes out, and `echo $?` is `0`. With no queue, `sudo` asks for the password at the terminal, though the script came through a pipe.
+6. Fedora: `ls ${TMPDIR:-/tmp}` has no folder left by it (`tmp.*`), and `printpipe status` shows the agent running from `~/.local/bin`, or says how to add it to `PATH`.
+7. Fedora, networking off: `could not reach GitHub`, exit 1.
+8. Publish: the release has the 4 binaries, `SHA256SUMS`, `install.sh` and `install.ps1`, and `sha256sum -c SHA256SUMS` passes on the downloads. `printpipe version` says the tag, which `upgrade` needs: it refuses a build that says otherwise.
+
+Not run yet: no release exists yet.
+
 ## `install`
 
 On each OS as an ordinary user, with an XP-365B on USB, a browser-downloaded build, nothing installed and nothing else on port 8631. Below `<exe>` is that download and `<o>` is `--origin https://app.example`.

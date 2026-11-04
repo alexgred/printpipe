@@ -2,8 +2,11 @@
 
 All notable changes to printpipe. Versions follow [semver](https://semver.org/).
 
-## Unreleased
+## v0.2.0
 
+The first release.
+
+- One line installs printpipe: `install.sh` and `install.ps1` download the build for this computer to a temp folder, check it against `SHA256SUMS`, run its `install` and delete it. `make release` builds windows/amd64, darwin/amd64, darwin/arm64 and linux/amd64 locally and publishes them with `gh`.
 - One binary for the command and the background agent: `printpipe version`, `printpipe help`; the agent runs as the hidden `printpipe serve`.
 - Configuration in `config.json` in the user's configuration folder: `port` (default 8631), `origins`, `queue`, `device`.
 - `GET /health` answers `{"name": "printpipe", "version": …, "pid": …}` with CORS for the requesting origin.
