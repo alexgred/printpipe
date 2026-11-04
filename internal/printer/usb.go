@@ -121,12 +121,26 @@ type bus interface {
 	write(ctx context.Context, path string, job []byte) error
 }
 
-// usbTimeout is how long a job may take to be written before the printer
+// writeTimeout is how long a job may take to be written before the printer
 // counts as not responding.
-const usbTimeout = 10 * time.Second
+const writeTimeout = 10 * time.Second
 
-// usbWriting is held while a job is written to a USB printer.
-var usbWriting = make(chan struct{}, 1)
+// writing is held while a job is written to a printer directly.
+var writing = make(chan struct{}, 1)
+
+// startWrite waits for the turn to write to a printer directly and sets the
+// write's deadline; done ends it. One job at a time: the device is opened
+// exclusively, so a second job written meanwhile would fail as busy instead of
+// following.
+func startWrite(ctx context.Context) (_ context.Context, done func(), _ error) {
+	select {
+	case writing <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	return ctx, func() { cancel(); <-writing }, nil
+}
 
 func (u USB) Print(ctx context.Context, job []byte) error {
 	b := u.bus
@@ -150,16 +164,11 @@ func (u USB) Print(ctx context.Context, job []byte) error {
 	default:
 		return &AmbiguousError{ID: u.ID, Printers: match}
 	}
-	// One job at a time: the device is opened exclusively, so a second job
-	// written meanwhile would fail as busy instead of following.
-	select {
-	case usbWriting <- struct{}{}:
-		defer func() { <-usbWriting }()
-	case <-ctx.Done():
-		return fmt.Errorf("printer %s: %w", u.ID, ctx.Err())
+	ctx, done, err := startWrite(ctx)
+	if err != nil {
+		return fmt.Errorf("printer %s: %w", u.ID, err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, usbTimeout)
-	defer cancel()
+	defer done()
 	if err := b.write(ctx, match[0].path, job); err != nil {
 		if cause := writeCause(err); cause != nil {
 			return fmt.Errorf("printer %s: %w: %w", u.ID, cause, err)
@@ -200,10 +209,6 @@ func writeCause(err error) error {
 	}
 	return nil
 }
-
-// ListUSB is the connected USB printers with their names, known models or
-// not, such as for install to list when it finds no known one.
-func ListUSB() ([]USBPrinter, error) { return namedUSB(osBus{}) }
 
 func namedUSB(b bus) ([]USBPrinter, error) {
 	printers, err := connectedUSB(b)

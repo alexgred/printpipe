@@ -238,3 +238,7 @@ func (w *usbWrite) result(h syscall.Handle) error {
 	}
 	return nil
 }
+
+// ListUSB is the connected USB printers with their names, known models or
+// not, such as for install to list when it finds no known one.
+func ListUSB(context.Context, Computer) ([]USBPrinter, error) { return namedUSB(osBus{}) }

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +33,21 @@ type fakeSystem struct {
 	onPort http.Handler
 	// requested is the URL of each request the CLI made.
 	requested []string
+	// programs answers the programs that are installed, by name; any other
+	// is not found, as exec reports it.
+	programs map[string]func(args []string) ([]byte, error)
+	// ran is each program run, with what it got on stdin.
+	ran []ranProgram
+	// deviceErr is what a write to a device file fails with, by path.
+	deviceErr map[string]error
+	// written is what each device file got.
+	written map[string][]byte
+}
+
+// ranProgram is one program the CLI ran.
+type ranProgram struct {
+	command string // the name and arguments, joined by spaces
+	stdin   []byte
 }
 
 func newFakeSystem() *fakeSystem {
@@ -39,7 +56,32 @@ func newFakeSystem() *fakeSystem {
 		files:     map[string][]byte{},
 		listening: make(chan net.Listener, 1),
 		now:       time.Date(2026, 11, 3, 20, 15, 4, 0, time.UTC),
+		programs:  map[string]func(args []string) ([]byte, error){},
+		deviceErr: map[string]error{},
+		written:   map[string][]byte{},
 	}
+}
+
+func (s *fakeSystem) Run(_ context.Context, stdin []byte, name string, args ...string) ([]byte, error) {
+	s.ran = append(s.ran, ranProgram{strings.Join(append([]string{name}, args...), " "), stdin})
+	program, ok := s.programs[name]
+	if !ok {
+		return nil, &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
+	return program(args)
+}
+
+func (s *fakeSystem) WriteDevice(_ context.Context, path string, job []byte) error {
+	if err := s.deviceErr[path]; err != nil {
+		return err
+	}
+	s.written[path] = job
+	return nil
+}
+
+// ReadDir finds nothing: no command reads a folder of the fake yet.
+func (s *fakeSystem) ReadDir(name string) ([]string, error) {
+	return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 }
 
 func (s *fakeSystem) ConfigDir() (string, error) { return s.configDir, nil }

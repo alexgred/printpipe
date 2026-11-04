@@ -29,7 +29,7 @@ func serve(e env) error {
 	}
 
 	logger := log.New(e.stderr, "", log.LstdFlags)
-	p, desc, err := pick(cfg, e.flags["dry-run"], logger)
+	p, desc, err := pick(cfg, e.flags["dry-run"], logger, e.sys)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
@@ -95,7 +95,7 @@ func loadConfig(e env, path string, explicit bool) (config.Config, string, error
 }
 
 // pick is the printer to print to, and how the log names it.
-func pick(c config.Config, dryRun string, logger *log.Logger) (server.Printer, string, error) {
+func pick(c config.Config, dryRun string, logger *log.Logger, computer printer.Computer) (server.Printer, string, error) {
 	switch {
 	case dryRun == "-":
 		return printer.Log{Logger: logger}, "dry run to the log", nil
@@ -104,7 +104,7 @@ func pick(c config.Config, dryRun string, logger *log.Logger) (server.Printer, s
 	case c.Queue != "" && c.Device != "":
 		return nil, "", errors.New("set either a queue or a device, not both")
 	case c.Queue != "":
-		return printer.Queue{Name: c.Queue}, "queue " + strconv.Quote(c.Queue), nil
+		return printer.NewQueue(c.Queue, computer), "queue " + strconv.Quote(c.Queue), nil
 	case strings.HasPrefix(c.Device, "usb:"):
 		id, err := printer.ParseUSB(c.Device)
 		if err != nil {
@@ -112,7 +112,7 @@ func pick(c config.Config, dryRun string, logger *log.Logger) (server.Printer, s
 		}
 		return printer.USB{ID: id}, "USB printer " + id.String(), nil
 	case c.Device != "":
-		return printer.Device{Path: c.Device}, "device " + c.Device, nil
+		return printer.Device{Path: c.Device, Computer: computer}, "device " + c.Device, nil
 	default:
 		return nil, "", errors.New("no printer: set a queue or a device")
 	}

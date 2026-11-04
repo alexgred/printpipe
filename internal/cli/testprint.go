@@ -10,6 +10,7 @@ import (
 
 	"github.com/alexgred/printpipe/internal/config"
 	"github.com/alexgred/printpipe/internal/models"
+	"github.com/alexgred/printpipe/internal/printer"
 	"github.com/alexgred/printpipe/internal/testlabel"
 )
 
@@ -68,6 +69,9 @@ func testPrint(e env) error {
 	case "origin_not_allowed":
 		return labelNotSent("the agent does not allow the configured origin", "Restart the agent so that it reads config.json: printpipe restart")
 	case "print_failed":
+		if printer.IsNoPermission(answer.Message) {
+			return labelNotSent(answer.Message, "sudo usermod -aG lp $USER, then log out and back in.")
+		}
 		return labelNotSent("printing failed", "The agent said: "+answer.Message, "Fix that, then: printpipe test-print")
 	case "":
 		return labelNotSent(fmt.Sprintf("the agent answered %s", resp.Status))

@@ -5,7 +5,17 @@ package printer
 import (
 	"context"
 	"errors"
+	"runtime"
 )
+
+// ListUSB is the connected USB printers with their names, known models or
+// not, found without root, such as for install to find a known one.
+func ListUSB(ctx context.Context, c Computer) ([]USBPrinter, error) {
+	if runtime.GOOS == "darwin" {
+		return ioregUSB(ctx, c)
+	}
+	return sysfsUSB(c)
+}
 
 // errUSBWindowsOnly: on macOS and Linux a USB printer is reached through a
 // CUPS queue or a device file instead.

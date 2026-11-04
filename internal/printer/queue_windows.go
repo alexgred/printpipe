@@ -14,6 +14,9 @@ type Queue struct {
 	Name string
 }
 
+// NewQueue is the printer with this name; the spooler needs no Computer.
+func NewQueue(name string, _ Computer) Queue { return Queue{Name: name} }
+
 var (
 	winspool         = syscall.NewLazyDLL("winspool.drv")
 	openPrinter      = winspool.NewProc("OpenPrinterW")
