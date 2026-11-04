@@ -43,7 +43,7 @@ Not verified yet: what `lpstat -e` does on a computer with no queue at all; whet
 
 | date | Linux | printer | build | result |
 |---|---|---|---|---|
-| 2026-11-04 | Fedora 44 | XP-365B | the commit adding this table | Steps 2, 3, 5, 7 and 8 pass. Step 1: `test-print` succeeded and CUPS completed the job (`XP-365B-15`); the label itself not yet looked at. Steps 4 and 6 not run: they need joining `lp` and handling the printer. |
+| 2026-11-04 | Fedora 44 | XP-365B | the commit adding this table | Steps 2, 3, 5, 7 and 8 pass. Step 1 passes: the label came out with Cyrillic in Cyrillic, too close to the left edge, so the text moved 1 mm right. With the cover open, through the queue: `test-print` says the label should have come out and CUPS completes the job in about 8 s with no error (`XP-365B-16`). The label came out once the cover was closed, with the new margin. Steps 4 and 6 not run: the user is not in `lp`. |
 
 ## macOS: through CUPS
 

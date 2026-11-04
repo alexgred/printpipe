@@ -2,8 +2,8 @@ SIZE 58 mm, 40 mm
 DIRECTION 1
 CODEPAGE 1251
 CLS
-TEXT 16,16,"2",0,1,1,"printpipe test print"
-TEXT 16,48,"2",0,1,1,"version 0.2.0"
-TEXT 16,80,"2",0,1,1,"2026-11-03T20:15:04"
-TEXT 16,120,"3",0,1,1," ириллица ®Є ўщ я€"
+TEXT 24,16,"2",0,1,1,"printpipe test print"
+TEXT 24,48,"2",0,1,1,"version 0.2.0"
+TEXT 24,80,"2",0,1,1,"2026-11-03T20:15:04"
+TEXT 24,120,"3",0,1,1," ириллица ®Є ўщ я€"
 PRINT 1,1

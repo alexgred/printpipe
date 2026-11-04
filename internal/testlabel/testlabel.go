@@ -58,7 +58,7 @@ const cyrillic = "Кириллица Ёё Щщ Яя"
 func TSPL(size Size, version string, at time.Time) []byte {
 	var b strings.Builder
 	line := func(format string, a ...any) { fmt.Fprintf(&b, format+"\r\n", a...) }
-	text := func(y int, font, s string) { line(`TEXT 16,%d,"%s",0,1,1,"%s"`, y, font, s) }
+	text := func(y int, font, s string) { line(`TEXT 24,%d,"%s",0,1,1,"%s"`, y, font, s) }
 	line("SIZE %s mm, %s mm", mm(size.Width), mm(size.Height))
 	line("DIRECTION 1")
 	line("CODEPAGE 1251")
