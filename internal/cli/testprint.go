@@ -29,7 +29,7 @@ func testPrint(e env) error {
 		return err
 	}
 	if agent == nil {
-		return &failure{msg: "the agent is not running", hints: []string{"Start it: printpipe start"}}
+		return agentNotRunning()
 	}
 	return sendTestLabel(e, cfg, size)
 }

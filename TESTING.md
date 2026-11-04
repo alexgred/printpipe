@@ -79,6 +79,22 @@ On each OS as an ordinary user, with an XP-365B on USB, a browser-downloaded bui
 
 Not run yet on any OS.
 
+## `status`
+
+On each OS as an ordinary user, with printpipe installed and a usable config:
+
+1. With the agent stopped: `printpipe status` shows `Agent: not running`, the rest, `the agent is not running`, and exit 1.
+2. `printpipe start`, then `status`: `running under systemd` on Linux with a user manager, `under launchd` on macOS, `with no service manager` on Windows and without a manager, and the pid of `/health`, exit 0. With `printpipe serve` in a terminal instead: `with no service manager`.
+3. A different build's copy, run as `<copy> status`: `installed` is the version of the installed binary, not the copy's. With nothing installed: `installed (none)`.
+4. A build installed over a running agent without a restart, such as by hand: both versions and the suggestion to run `printpipe restart`.
+5. `printpipe startup on`, then `status`: `Starts at login: on`.
+6. Windows, a `queue` naming a printer that exists, then one that does not: `exists`, then `not found`: `OpenPrinter` is the only way to tell, and no fake reaches it. A `device` with the printer plugged in, then unplugged: the same.
+7. Linux, `"device": "/dev/usb/lp0"` with the printer plugged in, then unplugged: `exists`, then `not found`, and no label comes out.
+8. CUPS, a `queue` that exists, then one that does not: `exists`, then `not found`. With the scheduler stopped: `could not check: the CUPS scheduler is not running`.
+9. With networking off, the same output.
+
+Checked on 2026-11-04 on Fedora with no user manager, a separate `HOME` and another port: step 1, step 2 for the detached child (`serve` in a terminal not run), and step 3 for a copy with something installed. Not run yet: everything else, and any other OS.
+
 ## Linux: running in the background
 
 On Fedora as an ordinary user, logged in to a desktop session, with a usable `~/.config/printpipe/config.json` and `printpipe` in `~/.local/bin`, where the unit and the autostart entry expect it (nothing else answering on the port):

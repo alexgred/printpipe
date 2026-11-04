@@ -39,6 +39,24 @@ type docInfo1 struct {
 	datatype   *uint16
 }
 
+// QueueExists is whether Windows has a printer with this name; the spooler needs
+// no Computer.
+func QueueExists(_ context.Context, _ Computer, name string) (bool, error) {
+	p, err := syscall.UTF16PtrFromString(name)
+	if err != nil {
+		return false, err
+	}
+	var h syscall.Handle
+	if r, _, err := openPrinter.Call(uintptr(unsafe.Pointer(p)), uintptr(unsafe.Pointer(&h)), 0); r == 0 {
+		if err == errorInvalidPrinterName {
+			return false, nil
+		}
+		return false, fmt.Errorf("OpenPrinter: %w", err)
+	}
+	closePrinter.Call(uintptr(h))
+	return true, nil
+}
+
 func (q Queue) Print(_ context.Context, job []byte) error {
 	if len(job) == 0 {
 		return nil

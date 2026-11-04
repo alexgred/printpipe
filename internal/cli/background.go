@@ -73,6 +73,10 @@ func portBusy(port int) error {
 	}
 }
 
+func agentNotRunning() error {
+	return &failure{msg: "the agent is not running", hints: []string{"Start it: printpipe start"}}
+}
+
 // service is how this computer keeps the agent running in the background.
 // None of its methods waits for the agent to answer; the commands do that.
 type service interface {
@@ -92,6 +96,9 @@ type service interface {
 	// the installed program, leaving on or off as it is. What start writes anyway
 	// is not its business.
 	refreshStartup(e env) error
+	// manager names what keeps the running agent with this pid running; empty when
+	// nothing does, as for printpipe serve in a terminal.
+	manager(e env, pid int) string
 }
 
 // agentWaitSeconds is how long a command waits for the agent to come up or go.
@@ -215,11 +222,14 @@ func startup(e env) error {
 			return err
 		}
 	}
-	state := "off"
+	return e.say("Starts at login: %s", onOff(on))
+}
+
+func onOff(on bool) string {
 	if on {
-		state = "on"
+		return "on"
 	}
-	return e.say("Starts at login: %s", state)
+	return "off"
 }
 
 // waitForAgent waits for the agent to answer on the port.
@@ -509,6 +519,13 @@ func (d systemd) startsAtLogin(e env) bool {
 // when there was no manager.
 func (systemd) refreshStartup(e env) error { return detached{}.refreshStartup(e) }
 
+func (d systemd) manager(e env, pid int) string {
+	if owned, err := d.runsAgent(e, pid); err != nil || !owned {
+		return ""
+	}
+	return "systemd"
+}
+
 // detached is a computer without a user manager: the agent is a child in its
 // own session, found again by its port, and an XDG autostart entry starts it
 // at login.
@@ -560,6 +577,8 @@ func (d detached) refreshStartup(e env) error {
 	}
 	return d.setStartup(e, true)
 }
+
+func (detached) manager(env, int) string { return "" }
 
 // windows is a PC with Windows: the agent is a process with no console, found
 // again by its port.
@@ -621,6 +640,8 @@ func (w windows) refreshStartup(e env) error {
 	}
 	return w.setStartup(e, true)
 }
+
+func (windows) manager(env, int) string { return "" }
 
 // launchd is the Mac's user session manager, which owns the agent as a service.
 type launchd struct{}
@@ -841,4 +862,11 @@ func (l launchd) startsAtLogin(e env) bool {
 	}
 	_, err = e.sys.ReadFile(login)
 	return err == nil
+}
+
+func (l launchd) manager(e env, pid int) string {
+	if l.loadedService(e).pid != pid {
+		return ""
+	}
+	return "launchd"
 }

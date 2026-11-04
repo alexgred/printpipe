@@ -10,6 +10,16 @@ import (
 	"strings"
 )
 
+// QueueExists is whether CUPS has a queue with this name, in which it ignores
+// case.
+func QueueExists(ctx context.Context, c Computer, name string) (bool, error) {
+	names, err := queueNames(ctx, c)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(names, func(n string) bool { return strings.EqualFold(n, name) }), nil
+}
+
 // Queue sends jobs to a CUPS queue with lp -o raw, so that no filter or
 // driver touches the bytes.
 type Queue struct {
@@ -28,12 +38,11 @@ func (q Queue) Print(ctx context.Context, job []byte) error {
 	// lp says the queue does not exist with the scheduler down too, so whether
 	// it does is asked of the list of queues instead.
 	if ctx.Err() == nil {
-		names, listErr := queueNames(ctx, q.c)
-		sameName := func(name string) bool { return strings.EqualFold(name, q.Name) }
+		exists, listErr := QueueExists(ctx, q.c, q.Name)
 		if errors.Is(listErr, errSchedulerDown) {
 			return fmt.Errorf("queue %s: %w", q.Name, listErr)
 		}
-		if listErr == nil && !slices.ContainsFunc(names, sameName) {
+		if listErr == nil && !exists {
 			return fmt.Errorf("queue %s: %w", q.Name, ErrNotFound)
 		}
 	}

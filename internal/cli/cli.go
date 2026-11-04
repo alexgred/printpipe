@@ -66,7 +66,7 @@ func commands() []command {
 		{name: "install", usage: "install [flags]           Install the agent for this user, find the printer, start and print a test label.", flags: []string{"origin", "queue", "device", "port", "size"}, switches: []string{"no-test-print"}, run: install},
 		{name: "upgrade", usage: "upgrade                   Install the latest release."},
 		{name: "remove", usage: "remove [--queue]          Stop and remove the agent; --queue removes its printer queue too."},
-		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files."},
+		{name: "status", usage: "status                    Show whether the agent runs, its version, printer and files.", run: status},
 		{name: "test-print", usage: "test-print [--size W,H]   Print the built-in test label.", flags: []string{"size"}, run: testPrint},
 		{name: "serve", flags: []string{"config", "dry-run"}, run: serve},
 	}
