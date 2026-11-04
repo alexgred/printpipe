@@ -23,4 +23,4 @@ Not verified yet: whether a vendor driver holds the device open, and whether a p
 
 | date | Windows | printer | build | result |
 |---|---|---|---|---|
-| 2026-11-04 | 11 | XP-365B | 7fcc04c | Steps 3, 5 and 6 pass. Step 4: the label printed; the Cyrillic line is not confirmed yet. Step 8 not run: no second printer. Steps 7 and 9 not reported. |
+| 2026-11-04 | 11 | XP-365B | 7fcc04c | Steps 3, 4 (Cyrillic prints), 5 and 6 pass. Step 7: tested with the cover open and reported fine; the exact message was not recorded. Step 8 not run: no second printer. Step 9 not reported. |
