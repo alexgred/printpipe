@@ -15,7 +15,8 @@ import (
 
 const xpURI = "usb://Xprinter/XP-365B?serial=0020426981AA"
 
-// cupsComputer makes sys a computer with CUPS and an XP-365B plugged in: sudo
+// cupsComputer makes sys a computer with CUPS and an XP-365B plugged in, listed
+// the way Linux and macOS each list it: sudo
 // lpadmin adds to the queues lpstat and lpoptions list, which start as lpoptions'
 // line by name.
 func cupsComputer(sys *fakeSystem, queues map[string]string, lpinfo string) {
@@ -25,6 +26,14 @@ func cupsComputer(sys *fakeSystem, queues map[string]string, lpinfo string) {
 	sys.files[d+"1-7/serial"] = []byte("0020426981aa\n")
 	sys.files[d+"1-7:1.0/bInterfaceClass"] = []byte("07\n")
 	sys.files[d+"1-7:1.0/ieee1284_id"] = []byte("MFG:Xprinter;MDL:XP-365B;\n")
+	sys.programs["ioreg"] = func([]string) ([]byte, error) {
+		return []byte(`+-o Printer-80@14100000  <class IOUSBHostDevice, id 0x1>
+  |   "idProduct" = 8214
+  |   "idVendor" = 8137
+  |   "USB Serial Number" = "0020426981aa"
+  |   "bInterfaceClass" = 7
+`), nil
+	}
 	cups(sys, queues, lpinfo)
 }
 

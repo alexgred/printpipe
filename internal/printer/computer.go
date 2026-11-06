@@ -5,6 +5,8 @@ import "context"
 // Computer is what printing through CUPS or a device file, and finding
 // printers, needs of the computer, so that tests drive it against a fake.
 type Computer interface {
+	// GOOS is the operating system, runtime.GOOS.
+	GOOS() string
 	// Run runs a program with stdin, speaking English whatever the user's
 	// language, and returns its stdout. A program that fails returns an error
 	// naming what it wrote to stderr; one that is not installed returns an

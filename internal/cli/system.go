@@ -25,8 +25,6 @@ import (
 // injected, so that tests drive every command against a fake.
 type System interface {
 	printer.Computer
-	// GOOS is the operating system, runtime.GOOS.
-	GOOS() string
 	// GOARCH is the processor architecture, runtime.GOARCH.
 	GOARCH() string
 	// Redirect is where a URL redirects to, without going there. An answer that
