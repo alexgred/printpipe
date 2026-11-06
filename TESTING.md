@@ -74,7 +74,7 @@ Not run yet. Not verified yet: `lpinfo` naming the printer `usb://Xprinter/XP-36
 7. Fedora, networking off: `could not reach GitHub`, exit 1.
 8. Publish: the release has the 4 binaries, `SHA256SUMS`, `install.sh` and `install.ps1`, and `sha256sum -c SHA256SUMS` passes on the downloads. `printpipe version` says the tag, which `upgrade` needs: it refuses a build that says otherwise.
 
-Not run yet: no release exists yet.
+Not run yet, though v0.2.0 is published.
 
 ## `install`
 
@@ -108,7 +108,7 @@ On each OS as an ordinary user, with an older release installed, the agent runni
 8. From a downloaded copy: `this copy of printpipe is not the installed one`, exit 1, with no network use.
 9. macOS: after step 1 the installed binary starts, with its ad-hoc signature valid: `codesign -v`, and `xattr` shows no `com.apple.quarantine`.
 
-Not run yet on any OS: no release exists yet.
+Not run yet on any OS: v0.2.0 is the only release, so there is no older one to upgrade from.
 
 ## `remove`
 
