@@ -60,7 +60,7 @@ printpipe test-print  print the built-in test label through the running agent
 
 It places itself in the binary folder by renames, which works over a running agent, and takes the browser's download mark off the installed file (`Zone.Identifier` on Windows, the quarantine attribute on macOS). On Windows it adds the folder to the user's `Path`; on macOS and Linux it prints the line to add when `~/.local/bin` is not on `PATH`, and edits no profile. It keeps a saved queue or device that is still there, else finds one as below. A running agent is always restarted, and the build that runs `install` is the one installed, even when older. It never turns starting at login on, but keeps what does so pointing at the installed binary. Only that binary starts by itself: `startup on`, and `start` under systemd or launchd, from a copy with nothing installed say to run `install` first.
 
-When it stops: with no printer the configuration is written and the agent is not started, so that plugging the printer in and running the same command is the fix. Another program on the port is left alone and the agent is not started. A test label that was not sent leaves the agent running. Each exits with 1. With several known printers connected it prints a ready command per printer.
+When it stops: with no printer the configuration is written and the agent is not started, so that plugging the printer in and running the same command is the fix. A saved or given device file or Windows queue that is gone stops it too, before the agent is started; it is not replaced by a printer `install` finds. Another program on the port is left alone and the agent is not started. A test label that was not sent leaves the agent running. Each exits with 1. With several known printers connected, or on Windows several that match a `usb:VID:PID` of any model, it prints a ready command per printer.
 
 `start` on a running agent and `stop` on a stopped one just say so and succeed. `start` and `startup` are independent: turning starting at login on does not start the agent, and turning it off does not stop it. The agent is found only by its port, through `/health`; if another program answers there, printpipe says so and leaves it alone.
 
@@ -97,8 +97,10 @@ The printer, from `install`:
 |---|---|
 | `no known label printer is connected` (Windows) | Plug the XP-365B in, switch it on and run the same command again. Another model: `printpipe config --device usb:VID:PID`, from the USB printers it lists. |
 | `no label printer queue and no known printer found` (macOS, Linux) | Plug the XP-365B in, switch it on and run the same command again. An existing queue: `printpipe config --queue <name>`. |
-| `<n> XP-365B printers are connected`, `<n> known label printers are connected` | Run one of the commands it prints, one per printer. A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again. |
+| `<n> XP-365B printers are connected`, `<n> known label printers are connected`, `<n> printers match usb:VID:PID` (Windows) | Run one of the commands it prints, one per printer. A printer with no serial number, or with one another printer has too, gets no command: leave one plugged in and run the same command again. |
 | `the printer <usb:…> is not connected` | Plug it in, switch it on and run the same command again. |
+| `the device file <file> is not there`, `the printer queue <name> is not there` | Plug the printer in, switch it on and run the same command again. Another printer: `printpipe config --device …` or `--queue <name>`. |
+| `could not check the device file <file>: …`, `could not check the printer queue <name>: …` | What the OS said is in the message. Fix that and run the same command again. |
 | `<usb:…> is not a printer model printpipe knows` | An existing queue: `printpipe install --queue <name>`. |
 | `there is no printer queue <name>` | See the queues with `lpstat -e` and run the same command again with one of them. |
 | `CUPS is not installed (lpadmin not found)` | Install CUPS and run the same command again. |
@@ -130,7 +132,7 @@ The test label, from `install` and `test-print`. In all of these but the first t
 | `the test label was not sent: the agent did not answer` | Check the agent: `printpipe status`. |
 | `the test label was not sent: config.json allows no origin to print` | Add the page that prints: `printpipe config --origin <url>`. |
 | `the test label was not sent: the printer was not found` | Check that the printer is plugged in and switched on, then `printpipe test-print`. |
-| `the test label was not sent: several printers match the configured device` | `printpipe config --device usb:VID:PID:<serial>`, then `printpipe test-print`. |
+| `the test label was not sent: several printers match the configured device` | Run one of the commands it prints, one per printer, or `printpipe config --device usb:VID:PID:<serial>` when it cannot list them; then `printpipe test-print`. |
 | `the test label was not sent: another program is using the printer` | Close that program, then `printpipe test-print`. |
 | `the test label was not sent: the printer did not respond` | Check the paper, the cover and the power, then `printpipe test-print`. |
 | `the test label was not sent: the agent does not allow the configured origin` | `printpipe restart`, so that it reads `config.json`. |
