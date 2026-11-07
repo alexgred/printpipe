@@ -2,6 +2,16 @@
 
 All notable changes to printpipe. Versions follow [semver](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- On Windows, `install` with several connected printers of a model printpipe does not know matching `usb:VID:PID` no longer panics: it exits with 1, `error: 2 printers match usb:VID:PID` and a `printpipe config --device` command per printer.
+- A printer that its device string cannot tell apart from another that matches, with no serial or with a serial another has too, gets no command; the hint to leave one plugged in is printed once instead. Two printers with the same serial no longer get the same command twice.
+- The label limit of `POST /print` counts CR, LF and CRLF line ends alike: a `PRINT` after a lone CR is counted, so a job over 10 labels is `bad_job` and a CR-only job of 1 to 10 labels prints.
+- `install` checks a saved or given device file (Linux) or Windows queue before it starts the agent. One that is gone fails with exit 1, says what to do and keeps the origin in `config.json`; a check that fails exits with 1 and the reason. Neither is replaced by a printer `install` finds.
+- `test-print` on `printer_ambiguous` lists the connected printers that match the configured device and prints a `printpipe config --device` command per printer with its real serial, falling back to the old hint when they cannot be listed or fewer than two match.
+
 ## v0.2.0
 
 The first release.

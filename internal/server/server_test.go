@@ -181,6 +181,8 @@ func TestJobPrintsOneToTenLabels(t *testing.T) {
 		{"no PRINT", head, false},
 		{"not a number", head + "PRINT x,1\r\n", false},
 		{"huge", head + "PRINT 99999999999999999999,1\r\n", false},
+		{"CR only", "CLS\rPRINT 1\r", true},
+		{"a CR-ended PRINT over ten", "PRINT 1\nCLS\rPRINT 100\r\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := &recorder{}

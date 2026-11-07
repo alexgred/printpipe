@@ -15,12 +15,12 @@ import (
 )
 
 // cupsPrinter is the configuration with the printer to print to on macOS and
-// Linux: a saved device or queue that is still there, the one --device chooses,
-// else what chooseQueue finds. Without one it fails and the caller keeps what
-// it returns.
+// Linux: a device file that is there, a saved queue that is still there, the one
+// --device chooses, else what chooseQueue finds. Without one it fails and the
+// caller keeps what it returns.
 func cupsPrinter(e env, cfg config.Config, path string, chosen *printer.USBID) (config.Config, error) {
 	if chosen == nil && cfg.Device != "" {
-		return cfg, nil
+		return cfg, checkUserPrinter(e, cfg)
 	}
 	queues, err := printer.Queues(e.ctx, e.sys)
 	if errors.Is(err, exec.ErrNotFound) {
@@ -214,9 +214,8 @@ func uriSerial(uri string) string {
 }
 
 // severalConnected is several known printers being plugged in, with a ready
-// command for each. A usb: device is printed to only on Windows; elsewhere install
-// makes a queue for the one it names. A printer with no serial cannot be named
-// apart from one of its model.
+// command for each that chooseAmong can name. A usb: device is printed to only on
+// Windows; elsewhere install makes a queue for the one it names.
 func severalConnected(goos string, printers []knownPrinter) error {
 	msg := fmt.Sprintf("%d known label printers are connected", len(printers))
 	if !slices.ContainsFunc(printers, func(p knownPrinter) bool { return p.model.Name != printers[0].model.Name }) {
@@ -224,31 +223,46 @@ func severalConnected(goos string, printers []knownPrinter) error {
 	}
 	command := "printpipe install --device "
 	if goos == "windows" {
-		command = "printpipe config --device "
+		command = configDevice
 	}
-	var hints []string
-	noSerial := false
-	for _, p := range printers {
-		if p.id.Serial == "" && sameModelCount(printers, p) > 1 {
-			noSerial = true
-			continue
-		}
-		hints = append(hints, command+p.id.String())
+	usb := make([]printer.USBPrinter, len(printers))
+	for i, p := range printers {
+		usb[i] = printer.USBPrinter{USBID: p.id}
 	}
-	if noSerial {
-		hints = append(hints, "A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again.")
-	}
-	return &failure{msg: msg, hints: hints}
+	return &failure{msg: msg, hints: chooseAmong(command, usb)}
 }
 
-func sameModelCount(printers []knownPrinter, p knownPrinter) int {
-	count := 0
-	for _, other := range printers {
-		if other.id.VID == p.id.VID && other.id.PID == p.id.PID {
-			count++
+// configDevice is the start of the command that chooses a printer to print to
+// as a device.
+const configDevice = "printpipe config --device "
+
+// chooseAmong is a ready command for each of the printers whose device string
+// names it alone among them, of a known model or not, followed by then when
+// there is one. A printer it cannot name, having no serial or one another has
+// too, gets instead, once, the hint to leave one plugged in.
+func chooseAmong(command string, printers []printer.USBPrinter, then ...string) []string {
+	var hints []string
+	unnamed := false
+	for _, p := range printers {
+		matching := 0
+		for _, other := range printers {
+			if p.USBID.Matches(other.USBID) {
+				matching++
+			}
 		}
+		if matching > 1 {
+			unnamed = true
+			continue
+		}
+		hints = append(hints, command+p.USBID.String())
 	}
-	return count
+	if len(hints) > 0 {
+		hints = append(hints, then...)
+	}
+	if unnamed {
+		hints = append(hints, "A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again.")
+	}
+	return hints
 }
 
 // queueName is the name for the queue to create: the one printpipe created

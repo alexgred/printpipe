@@ -423,6 +423,48 @@ func TestInstallAddsTheOriginToThoseThereOnce(t *testing.T) {
 	}
 }
 
+// A device file is only ever set by a user, so one that is gone is no reason
+// to print to another printer.
+func TestInstallWithASavedDeviceFileThatIsGoneSaysSoAndStartsNothing(t *testing.T) {
+	sys := newFakeSystem()
+	withSystemd(sys)
+	cupsComputer(sys, map[string]string{"XP-365B": usableQueue}, "")
+	sys.files[configPath] = []byte(`{"origins": ["` + app + `"], "device": "/dev/usb/lp0"}`)
+
+	got := run(t, sys, "install", "--no-test-print")
+
+	wantFailure(t, got, "error: the device file /dev/usb/lp0 is not there\n"+
+		"  Plug the printer in, switch it on and run the same command again.\n"+
+		"  Another printer: printpipe config --device <file>, or --queue <name>\n")
+	if cfg := savedConfig(t, sys); !slices.Equal(cfg.Origins, []string{app}) || cfg.Device != "/dev/usb/lp0" {
+		t.Errorf("config has origins %q and device %q, want both kept", cfg.Origins, cfg.Device)
+	}
+	if sys.onPort != nil {
+		t.Error("the agent started")
+	}
+	wantNotRan(t, sys, "systemctl --user start printpipe.service")
+
+	// The fix is to plug it in and run the same command.
+	sys.files["/dev/usb/lp0"] = nil
+	sys.onSpawn = nil
+	if got := runInstall(t, sys); got.code != 0 || !strings.Contains(got.stdout, "Printer: device /dev/usb/lp0\n") {
+		t.Errorf("the same command again: %+v", got)
+	}
+}
+
+func TestInstallWithAGivenDeviceFileThatIsNotThereSaysSo(t *testing.T) {
+	sys := newFakeSystem()
+	withSystemd(sys)
+	cupsComputer(sys, map[string]string{"XP-365B": usableQueue}, "")
+
+	got := runInstall(t, sys, "--device", "/dev/usb/lp1")
+
+	wantFailure(t, got, "error: the device file /dev/usb/lp1 is not there\n"+
+		"  Plug the printer in, switch it on and run the same command again.\n"+
+		"  Another printer: printpipe config --device <file>, or --queue <name>\n")
+	wantNotRan(t, sys, "systemctl --user start printpipe.service")
+}
+
 // A queue named on the command line is no reason to print to another one.
 func TestInstallWithAQueueThatIsNotThereSaysSo(t *testing.T) {
 	sys, _ := withXPQueue()
@@ -649,11 +691,12 @@ func TestOnWindowsInstallRestartsAnAgentRunningFromTheFileItMoved(t *testing.T) 
 func TestOnWindowsInstallKeepsASavedDeviceOrQueueThatIsThere(t *testing.T) {
 	for _, tc := range []struct{ name, config, line string }{
 		{"a device with its serial", `"device": "usb:1FC9:2016:0020426981AA"`, "Printer: XP-365B (usb:1FC9:2016:0020426981AA)\n"},
-		{"a queue", `"queue": "Office label"`, "Printer: queue Office label\n"},
+		{"a queue", `"queue": "Office-label"`, "Printer: queue Office-label\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sys := onWindows()
 			xpOnWindows(sys)
+			windowsQueues(sys, "Office-label")
 			files, _ := filesOf(sys)
 			sys.files[files.Config] = []byte(`{"origins": ["` + app + `"], ` + tc.config + `}`)
 
@@ -663,6 +706,52 @@ func TestOnWindowsInstallKeepsASavedDeviceOrQueueThatIsThere(t *testing.T) {
 				t.Errorf("got %+v, want exit 0 and %q", got, tc.line)
 			}
 		})
+	}
+}
+
+// A queue is never found by printpipe, only named by a user, so one that is
+// gone is no reason to print to another printer. QueueExists asks CUPS on the
+// test's OS, so lpstat stands in for the spooler here.
+func TestOnWindowsInstallWithASavedQueueThatIsGoneSaysSoAndStartsNothing(t *testing.T) {
+	sys := onWindows()
+	xpOnWindows(sys)
+	windowsQueues(sys, "Other")
+	files, _ := filesOf(sys)
+	sys.files[files.Config] = []byte(`{"origins": ["` + app + `"], "queue": "Office-label"}`)
+
+	got := run(t, sys, "install")
+
+	wantFailure(t, got, "error: the printer queue Office-label is not there\n"+
+		"  Plug the printer in, switch it on and run the same command again.\n"+
+		"  Another printer: printpipe config --device usb:VID:PID, or --queue <name>\n")
+	if len(sys.spawned) != 0 {
+		t.Errorf("spawned %q", sys.spawned)
+	}
+	if cfg, _ := config.Parse(sys.files[files.Config]); !slices.Equal(cfg.Origins, []string{app}) || cfg.Queue != "Office-label" {
+		t.Errorf("config has origins %q and queue %q, want both kept", cfg.Origins, cfg.Queue)
+	}
+}
+
+func TestOnWindowsInstallThatCannotCheckTheQueueSaysWhy(t *testing.T) {
+	sys := onWindows()
+	xpOnWindows(sys)
+	sys.programs["lpstat"] = func([]string) ([]byte, error) { return nil, errors.New("the spooler is down") }
+
+	got := run(t, sys, "install", "--origin", app, "--queue", "Office-label")
+
+	wantFailure(t, got, "error: could not check the printer queue Office-label: the spooler is down\n")
+	if len(sys.spawned) != 0 {
+		t.Errorf("spawned %q", sys.spawned)
+	}
+}
+
+// windowsQueues is the printers Windows has, as lpstat lists them.
+func windowsQueues(sys *fakeSystem, names ...string) {
+	sys.programs["lpstat"] = func(args []string) ([]byte, error) {
+		if args[0] == "-r" {
+			return []byte("scheduler is running\n"), nil
+		}
+		return []byte(strings.Join(names, "\n")), nil
 	}
 }
 
@@ -731,14 +820,75 @@ func TestOnWindowsInstallWithTwoOfTheModelGivesACommandPerDevice(t *testing.T) {
 		"  printpipe config --device usb:1FC9:2016:SECOND\n")
 }
 
-// secondXP plugs in another XP-365B.
-func secondXP(sys *fakeSystem, serial string) {
-	const d = "/sys/bus/usb/devices/"
-	sys.files[d+"1-8/idVendor"] = []byte("1fc9\n")
-	sys.files[d+"1-8/idProduct"] = []byte("2016\n")
-	sys.files[d+"1-8/serial"] = []byte(serial + "\n")
-	sys.files[d+"1-8:1.0/bInterfaceClass"] = []byte("07\n")
+// Printers of a model printpipe does not know, matching the device saved or
+// named, get a command each all the same.
+func TestOnWindowsInstallWithTwoOfAnUnknownModelGivesACommandPerDevice(t *testing.T) {
+	const want = "error: 2 printers match usb:0483:5720\n" +
+		"  printpipe config --device usb:0483:5720:AAA\n" +
+		"  printpipe config --device usb:0483:5720:BBB\n"
+	t.Run("saved", func(t *testing.T) {
+		sys := onWindows()
+		plugUSB(sys, "1-8", "0483", "5720", "AAA")
+		plugUSB(sys, "1-9", "0483", "5720", "BBB")
+		files, _ := filesOf(sys)
+		sys.files[files.Config] = []byte(`{"origins": ["` + app + `"], "device": "usb:0483:5720"}`)
+
+		got := run(t, sys, "install")
+
+		wantFailure(t, got, want)
+		if len(sys.spawned) != 0 {
+			t.Errorf("spawned %q", sys.spawned)
+		}
+	})
+	t.Run("named", func(t *testing.T) {
+		sys := onWindows()
+		plugUSB(sys, "1-8", "0483", "5720", "AAA")
+		plugUSB(sys, "1-9", "0483", "5720", "BBB")
+
+		got := run(t, sys, "install", "--origin", app, "--device", "usb:0483:5720")
+
+		wantFailure(t, got, want)
+	})
 }
+
+// A printer its device cannot tell apart from another that matches gets no
+// command: one with no serial, or one whose serial another has too.
+func TestOnWindowsInstallGivesNoCommandForAPrinterItCannotName(t *testing.T) {
+	const leaveOne = "  A printer with no serial number cannot be chosen among its model: leave one plugged in and run the same command again.\n"
+	for _, tc := range []struct {
+		name, vid, pid string
+		serials        [3]string
+		want           string
+	}{
+		{"a known model sharing a serial", "1fc9", "2016", [3]string{"SAME", "SAME", "THIRD"},
+			"error: 3 XP-365B printers are connected\n  printpipe config --device usb:1FC9:2016:THIRD\n" + leaveOne},
+		{"an unknown model with no serial", "0483", "5720", [3]string{"", "", "THIRD"},
+			"error: 3 printers match usb:0483:5720\n  printpipe config --device usb:0483:5720:THIRD\n" + leaveOne},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sys := onWindows()
+			for i, serial := range tc.serials {
+				plugUSB(sys, fmt.Sprintf("1-%d", 7+i), tc.vid, tc.pid, serial)
+			}
+			got := run(t, sys, "install", "--origin", app, "--device", "usb:"+tc.vid+":"+tc.pid)
+			wantFailure(t, got, tc.want)
+		})
+	}
+}
+
+// plugUSB plugs a USB printer in at a sysfs device; an empty serial is none.
+func plugUSB(sys *fakeSystem, device, vid, pid, serial string) {
+	const d = "/sys/bus/usb/devices/"
+	sys.files[d+device+"/idVendor"] = []byte(vid + "\n")
+	sys.files[d+device+"/idProduct"] = []byte(pid + "\n")
+	if serial != "" {
+		sys.files[d+device+"/serial"] = []byte(serial + "\n")
+	}
+	sys.files[d+device+":1.0/bInterfaceClass"] = []byte("07\n")
+}
+
+// secondXP plugs in another XP-365B.
+func secondXP(sys *fakeSystem, serial string) { plugUSB(sys, "1-8", "1fc9", "2016", serial) }
 
 // macOS.
 

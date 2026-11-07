@@ -273,11 +273,11 @@ func findPrinter(e env, cfg config.Config, path string, chosen *printer.USBID) (
 }
 
 // windowsPrinter is the configuration with the printer to print to on Windows: a
-// queue, which is used only when named and which printpipe cannot see, a saved
-// device that is still connected, else the known model that is.
+// queue that is there, which is used only when named, a saved device that is
+// still connected, else the known model that is.
 func windowsPrinter(e env, cfg config.Config) (config.Config, error) {
 	if cfg.Queue != "" {
-		return cfg, nil
+		return cfg, checkUserPrinter(e, cfg)
 	}
 	usb, err := printer.ListUSB(e.ctx, e.sys)
 	if err != nil {
@@ -298,7 +298,11 @@ func windowsPrinter(e env, cfg config.Config) (config.Config, error) {
 		case len(match) == 1:
 			return cfg, nil
 		case len(match) > 1:
-			return cfg, severalConnected("windows", knownAmong(match))
+			// The matches share their IDs, so all are of a known model or none.
+			if known := knownAmong(match); len(known) > 0 {
+				return cfg, severalConnected("windows", known)
+			}
+			return cfg, &failure{msg: fmt.Sprintf("%d printers match %s", len(match), id), hints: chooseAmong(configDevice, match)}
 		case named:
 			return cfg, notConnected(id)
 		}
@@ -312,6 +316,33 @@ func windowsPrinter(e env, cfg config.Config) (config.Config, error) {
 		return cfg, nil
 	default:
 		return cfg, severalConnected("windows", known)
+	}
+}
+
+// checkUserPrinter is nil when the configured device file or Windows queue is
+// there. Only a user ever sets one, so install never replaces one that is gone
+// with a printer it finds.
+func checkUserPrinter(e env, cfg config.Config) error {
+	what, another := "device file "+cfg.Device, "<file>"
+	if cfg.Queue != "" {
+		what = "printer queue " + cfg.Queue
+	}
+	if e.sys.GOOS() == "windows" {
+		another = "usb:VID:PID"
+	}
+	there, err := printerExists(e, cfg)
+	if err != nil {
+		return &failure{msg: fmt.Sprintf("could not check the %s: %v", what, err)}
+	}
+	if there {
+		return nil
+	}
+	return &failure{
+		msg: fmt.Sprintf("the %s is not there", what),
+		hints: []string{
+			"Plug the printer in, switch it on and run the same command again.",
+			"Another printer: printpipe config --device " + another + ", or --queue <name>",
+		},
 	}
 }
 

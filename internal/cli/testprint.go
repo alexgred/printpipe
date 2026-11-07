@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/alexgred/printpipe/internal/config"
 	"github.com/alexgred/printpipe/internal/models"
@@ -78,7 +79,7 @@ func sendTestLabel(e env, cfg config.Config, size testlabel.Size) error {
 	case "printer_not_found":
 		return labelNotSent("the printer was not found", "Check that the printer is plugged in and switched on, then: printpipe test-print")
 	case "printer_ambiguous":
-		return labelNotSent("several printers match the configured device", "Choose one with printpipe config --device usb:VID:PID:<serial>, then: printpipe test-print")
+		return labelNotSent("several printers match the configured device", chooseMatching(e, cfg.Device)...)
 	case "printer_busy":
 		return labelNotSent("another program is using the printer", "Close that program, then: printpipe test-print")
 	case "printer_not_responding":
@@ -95,6 +96,27 @@ func sendTestLabel(e env, cfg config.Config, size testlabel.Size) error {
 	default:
 		return labelNotSent("the agent refused it", "The agent said: "+answer.Message)
 	}
+}
+
+// chooseMatching is a command for each connected printer that matches the
+// device, as install gives them. config --device restarts a running agent, so
+// the test label can follow. When they cannot be listed, or fewer than two match
+// by now, it says how to make the command.
+func chooseMatching(e env, device string) []string {
+	placeholder := []string{"Choose one with printpipe config --device usb:VID:PID:<serial>, then: printpipe test-print"}
+	id, err := printer.ParseUSB(device)
+	if err != nil {
+		return placeholder
+	}
+	usb, err := printer.ListUSB(e.ctx, e.sys)
+	if err != nil {
+		return placeholder
+	}
+	match := slices.DeleteFunc(usb, func(p printer.USBPrinter) bool { return !id.Matches(p.USBID) })
+	if len(match) < 2 {
+		return placeholder
+	}
+	return chooseAmong(configDevice, match, "Then: printpipe test-print")
 }
 
 // labelSize is the test label's size for the configured printer: its known

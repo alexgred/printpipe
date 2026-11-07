@@ -161,6 +161,7 @@ func TestInstallAsksForNoPasswordWhenAQueueIsThereOrChosen(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sys := newFakeSystem()
 			cupsComputer(sys, tc.queues, "direct "+xpURI+"\n")
+			sys.files["/dev/usb/lp0"] = nil
 			files, _ := filesOf(sys)
 			sys.files[files.Config] = []byte(tc.config)
 
