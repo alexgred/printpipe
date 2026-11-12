@@ -2,7 +2,7 @@
 
 All notable changes to printpipe. Versions follow [semver](https://semver.org/).
 
-## Unreleased
+## v0.2.1
 
 ### Changed
 
