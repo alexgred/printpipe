@@ -4,6 +4,10 @@ All notable changes to printpipe. Versions follow [semver](https://semver.org/).
 
 ## Unreleased
 
+### Changed
+
+- The XP-365B's test label is made for a 40×30 mm roll, not 58×40: `test-print` and `install` without `--size` print `SIZE 40 mm, 30 mm`, and the CUPS queue `install` creates has a 40×30 mm page in its PPD. `--size 58,40` prints the old size.
+
 ### Fixed
 
 - On Windows, `install` with several connected printers of a model printpipe does not know matching `usb:VID:PID` no longer panics: it exits with 1, `error: 2 printers match usb:VID:PID` and a `printpipe config --device` command per printer.

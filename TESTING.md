@@ -4,7 +4,7 @@
 
 ## Windows: straight to the USB device
 
-On a Windows 11 PC as an ordinary user (no admin), an XP-365B on USB with a 58×40 roll, and no driver or queue installed for it:
+On a Windows 11 PC as an ordinary user (no admin), an XP-365B on USB with a 40×30 roll, and no driver or queue installed for it:
 
 1. Build: `make build`, copy `dist/printpipe-windows-amd64.exe` to the PC as `printpipe.exe`.
 2. Write `%APPDATA%\printpipe\config.json`:
@@ -27,7 +27,7 @@ Not verified yet: whether a vendor driver holds the device open, and whether a p
 
 ## Linux: through CUPS
 
-On Fedora as an ordinary user not in the `lp` group, an XP-365B on USB with a 58×40 roll and a CUPS queue for it (below, `XP-365B`). With `"port"` and `"origins"` in `~/.config/printpipe/config.json`, run `printpipe serve` in one terminal and, in another, after each change of config (restart `serve`):
+On Fedora as an ordinary user not in the `lp` group, an XP-365B on USB with a 40×30 roll and a CUPS queue for it (below, `XP-365B`). With `"port"` and `"origins"` in `~/.config/printpipe/config.json`, run `printpipe serve` in one terminal and, in another, after each change of config (restart `serve`):
 
 1. `"queue": "XP-365B"`: `printpipe test-print` says `A test label should have come out of the printer`, and the label comes out with the Cyrillic line in Cyrillic.
 2. `"queue": "no-such-queue"`: `test-print` says `the printer was not found`.
@@ -108,7 +108,7 @@ On each OS as an ordinary user, with an older release installed, the agent runni
 8. From a downloaded copy: `this copy of printpipe is not the installed one`, exit 1, with no network use.
 9. macOS: after step 1 the installed binary starts, with its ad-hoc signature valid: `codesign -v`, and `xattr` shows no `com.apple.quarantine`.
 
-Not run yet on any OS: v0.2.0 is the only release, so there is no older one to upgrade from.
+Not run yet on any OS. From v0.2.1 on, v0.2.0 is an older release to upgrade from.
 
 ## `remove`
 

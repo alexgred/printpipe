@@ -70,7 +70,7 @@ On macOS launchd owns the agent, as the service `io.github.alexgred.printpipe` i
 
 On Windows the agent is a process with no window and no console, which outlives the terminal it was started from. `stop` signals the event `Local\printpipe-stop` for a graceful exit, then ends the process by force, once its program file shows that it is printpipe. `startup on` adds the value `printpipe` to the user's `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which runs the installed `printpipe.exe`, whichever copy wrote it, with `start`; none of this needs admin rights. On Windows 11 24H2 and later nothing shows at logon; older builds may flash a console window for a moment.
 
-`test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 58×40 mm); `--size W,H` in mm, such as `--size 40,30`, sets another.
+`test-print` sends the agent's own test label (`printpipe test print`, the version, the date and time, and one Cyrillic line) to the running agent's `/print`, so it fails the way a page would. The label is made for the configured printer model's roll (the XP-365B: 40×30 mm); `--size W,H` in mm, such as `--size 58,40`, sets another.
 
 `printpipe help` lists the commands. Exit codes: 0 success, 1 any failure, 2 wrong usage.
 

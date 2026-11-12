@@ -32,7 +32,7 @@ func TestTestPrintSendsTheTestLabelThroughTheAgent(t *testing.T) {
 		t.Fatalf("the printer got %d jobs, want 1", len(p.jobs))
 	}
 	job := p.jobs[0]
-	for _, want := range []string{"SIZE 58 mm, 40 mm\r\n", `"printpipe test print"`, `"version dev"`, `"2026-11-03T20:15:04"`, "CODEPAGE 1251\r\n", "PRINT 1,1\r\n"} {
+	for _, want := range []string{"SIZE 40 mm, 30 mm\r\n", `"printpipe test print"`, `"version dev"`, `"2026-11-03T20:15:04"`, "CODEPAGE 1251\r\n", "PRINT 1,1\r\n"} {
 		if !bytes.Contains(job, []byte(want)) {
 			t.Errorf("the job has no %q:\n%q", want, job)
 		}
@@ -79,8 +79,8 @@ func TestTestPrintWithoutAKnownModelUsesTheDefaultSize(t *testing.T) {
 		if got := run(t, sys, "test-print"); got.code != 0 {
 			t.Fatalf("%s: got %+v, want exit 0", printerConfig, got)
 		}
-		if len(p.jobs) != 1 || !bytes.HasPrefix(p.jobs[0], []byte("SIZE 58 mm, 40 mm\r\n")) {
-			t.Errorf("%s: jobs %q, want one 58x40 label", printerConfig, p.jobs)
+		if len(p.jobs) != 1 || !bytes.HasPrefix(p.jobs[0], []byte("SIZE 40 mm, 30 mm\r\n")) {
+			t.Errorf("%s: jobs %q, want one 40x30 label", printerConfig, p.jobs)
 		}
 	}
 }

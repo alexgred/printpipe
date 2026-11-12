@@ -36,7 +36,7 @@ var known = []Model{
 		Name: "XP-365B",
 		VID:  0x1FC9, PID: 0x2016,
 		MFG: "Xprinter", MDL: "XP-365B",
-		TestLabelSize: testlabel.Size{Width: 58, Height: 40},
+		TestLabelSize: testlabel.Size{Width: 40, Height: 30},
 		PPD:           xp365bPPD,
 	},
 }

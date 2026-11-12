@@ -26,17 +26,17 @@
 
 *OpenUI *PageSize/Media Size: PickOne
 *OrderDependency: 10 AnySetup *PageSize
-*DefaultPageSize: w164h113
-*PageSize w164h113/58 x 40 mm: "<</PageSize[164 113]/ImagingBBox null>>setpagedevice"
+*DefaultPageSize: w113h85
+*PageSize w113h85/40 x 30 mm: "<</PageSize[113 85]/ImagingBBox null>>setpagedevice"
 *CloseUI: *PageSize
 
 *OpenUI *PageRegion: PickOne
 *OrderDependency: 10 AnySetup *PageRegion
-*DefaultPageRegion: w164h113
-*PageRegion w164h113/58 x 40 mm: "<</PageSize[164 113]/ImagingBBox null>>setpagedevice"
+*DefaultPageRegion: w113h85
+*PageRegion w113h85/40 x 30 mm: "<</PageSize[113 85]/ImagingBBox null>>setpagedevice"
 *CloseUI: *PageRegion
 
-*DefaultImageableArea: w164h113
-*ImageableArea w164h113/58 x 40 mm: "0 0 164 113"
-*DefaultPaperDimension: w164h113
-*PaperDimension w164h113/58 x 40 mm: "164 113"
+*DefaultImageableArea: w113h85
+*ImageableArea w113h85/40 x 30 mm: "0 0 113 85"
+*DefaultPaperDimension: w113h85
+*PaperDimension w113h85/40 x 30 mm: "113 85"

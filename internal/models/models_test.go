@@ -16,8 +16,8 @@ func TestTheXP365BIsKnownByItsUSBIDsAndIts1284ID(t *testing.T) {
 	if !ok || byUSB.Name != "XP-365B" {
 		t.Fatalf("ByUSB(1FC9, 2016) = %+v, %v; want the XP-365B", byUSB, ok)
 	}
-	if byUSB.TestLabelSize != (testlabel.Size{Width: 58, Height: 40}) {
-		t.Errorf("test label size %v, want 58x40", byUSB.TestLabelSize)
+	if byUSB.TestLabelSize != (testlabel.Size{Width: 40, Height: 30}) {
+		t.Errorf("test label size %v, want 40x30", byUSB.TestLabelSize)
 	}
 	if !bytes.HasPrefix(byUSB.PPD, []byte("*PPD-Adobe:")) {
 		t.Errorf("PPD starts with %q, want a PPD", byUSB.PPD[:min(len(byUSB.PPD), 20)])
