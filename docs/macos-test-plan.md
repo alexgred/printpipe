@@ -1,12 +1,12 @@
-# macOS test plan
+# План тестирования на macOS
 
-The first run of printpipe on a real Mac, Apple Silicon or Intel. The steps themselves are in `TESTING.md`; this file puts the macOS ones in order, riskiest first, and says what to keep. Record results in the tables of `TESTING.md`, as for Windows and Fedora.
+Первый запуск printpipe на настоящем Mac, с Apple Silicon или Intel. Сами шаги описаны в `TESTING.md`. Этот файл выстраивает шаги для macOS по порядку, от самых рискованных, и говорит, что сохранить. Результаты записывай в таблицы `TESTING.md`, как для Windows и Fedora.
 
-Setup: an ordinary user logged in to the desktop, an XP-365B on USB with a 40×30 roll, nothing of printpipe installed, nothing on port 8631. Note the macOS version, the chip and the printpipe build.
+Подготовка: обычный пользователь, вошедший в графическую сессию; XP-365B по USB с рулоном 40×30; printpipe не установлен; порт 8631 свободен. Запиши версию macOS, процессор и сборку printpipe.
 
-## 1. Keep the raw output first
+## 1. Сначала сохрани сырой вывод
 
-printpipe parses `ioreg`, `lpinfo` and `launchctl print` from what is known of their format, not from a real Mac. Before installing, save:
+printpipe разбирает вывод `ioreg`, `lpinfo` и `launchctl print` по описаниям формата, а не по выводу настоящего Mac. До установки сохрани:
 
 ```sh
 sw_vers > sw_vers.txt; uname -m >> sw_vers.txt
@@ -15,70 +15,70 @@ sudo lpinfo --include-schemes usb -v > lpinfo.txt
 LC_ALL=C.UTF-8 lpstat -r > lpstat.txt; lpstat -e >> lpstat.txt 2>&1; echo "exit $?" >> lpstat.txt
 ```
 
-Once the agent runs (step 2), also:
+Когда агент запустится (раздел 2), добавь ещё:
 
 ```sh
 launchctl print gui/$UID/io.github.alexgred.printpipe > launchctl.txt
 ```
 
-If parsing fails, these files become the test fixtures for the fix.
+Если разбор не сработает, эти файлы станут фикстурами для тестов исправления.
 
-- [ ] `ioreg.txt`, `lpinfo.txt`, `lpstat.txt`, `launchctl.txt` saved
-- [ ] `lpstat -r` says `scheduler is running`
-- [ ] What `lpstat -e` does with no queue at all, if that is the case: noted
+- [ ] Сохранены `ioreg.txt`, `lpinfo.txt`, `lpstat.txt`, `launchctl.txt`
+- [ ] `lpstat -r` выводит `scheduler is running`
+- [ ] Если очередей нет совсем: записано, что при этом делает `lpstat -e`
 
-## 2. The one-line install
+## 2. Установка одной строкой
 
-`TESTING.md` → "The one-line install", steps 5–7 done on the Mac. One command covers download, finding the printer, creating the queue, launchd and the test label.
+`TESTING.md` → «The one-line install», шаги 5–7, выполненные на Mac. Одна команда проверяет скачивание, поиск принтера, создание очереди, launchd и тестовую этикетку.
 
 ```sh
 curl -fsSL https://github.com/alexgred/printpipe/releases/latest/download/install.sh | sh -s -- --origin https://app.example
 ```
 
-- [ ] One line per step, the label comes out, Cyrillic in Cyrillic, `echo $?` is `0`
-- [ ] `sudo` asks for the password at the terminal, though the script came through a pipe
-- [ ] `ls ${TMPDIR:-/tmp}` has no `tmp.*` folder left by it
-- [ ] `printpipe status` shows the agent `running under launchd` from `~/.local/bin`, or says how to add it to `PATH`
-- [ ] `xattr ~/.local/bin/printpipe` has no `com.apple.quarantine`; `codesign -v ~/.local/bin/printpipe` passes
-- [ ] Networking off: `could not reach GitHub`, exit 1
+- [ ] По строке на каждый шаг, этикетка вышла, кириллица напечатана кириллицей, `echo $?` выводит `0`
+- [ ] `sudo` спрашивает пароль в терминале, хотя скрипт пришёл через пайп
+- [ ] В `ls ${TMPDIR:-/tmp}` не осталось папки `tmp.*`
+- [ ] `printpipe status` показывает агент `running under launchd` из `~/.local/bin` или говорит, как добавить его в `PATH`
+- [ ] `xattr ~/.local/bin/printpipe` не показывает `com.apple.quarantine`; `codesign -v ~/.local/bin/printpipe` проходит
+- [ ] Без сети: `could not reach GitHub`, код выхода 1
 
 ## 3. CUPS
 
-`TESTING.md` → "macOS: through CUPS" and "Linux: creating a CUPS queue".
+`TESTING.md` → «macOS: through CUPS» и «Linux: creating a CUPS queue».
 
-- [ ] `printer.ListUSB` finds the printer; note its name (`Xprinter XP-365B` or `Printer Printer-80`)
-- [ ] `lpinfo` names it `usb://Xprinter/XP-365B`
-- [ ] `lpadmin -P` takes the minimal PPD; `lpoptions -p XP-365B` has the `device-uri` and `printer-is-shared=false`
-- [ ] `config.json` has `"queue"` and `"created_queue"`, no `.ppd` left beside it
-- [ ] `"queue": "no-such-queue"`: `test-print` says `the printer was not found`
-- [ ] `printpipe install` again: no password, no new queue, `Agent restarted`
+- [ ] `printer.ListUSB` находит принтер; записать, под каким именем (`Xprinter XP-365B` или `Printer Printer-80`)
+- [ ] `lpinfo` называет его `usb://Xprinter/XP-365B`
+- [ ] `lpadmin -P` принимает минимальный PPD; в `lpoptions -p XP-365B` есть `device-uri` и `printer-is-shared=false`
+- [ ] В `config.json` есть `"queue"` и `"created_queue"`, рядом не осталось файла `.ppd`
+- [ ] С `"queue": "no-such-queue"` команда `test-print` выводит `the printer was not found`
+- [ ] Повторный `printpipe install`: без пароля, без новой очереди, `Agent restarted`
 
 ## 4. launchd
 
-`TESTING.md` → "macOS: running in the background", steps 1–11. The fragile ones:
+`TESTING.md` → «macOS: running in the background», шаги 1–11. Самые хрупкие места:
 
-- [ ] 1: `start` works; `plutil -lint` accepts the plist; `launchctl print` has `pid = N` matching `/health` and `program = <binary>`. A second `start` says `already running`
-- [ ] 2: the agent survives closing the terminal
-- [ ] 3: `restart` gives a new `pid` on `/health` right away
-- [ ] 4: `stop`, a second `stop` says `not running`, `restart` starts it
-- [ ] 5: a hand-changed plist, then `restart`: no `Bootstrap failed: 5`
-- [ ] 6: `startup on`, log out and in: the agent runs; `stop` works; `startup off`, log out and in: it does not
-- [ ] 7: `kill -SEGV` → launchd restarts it within ~10 s; a broken config → `the agent did not answer within 10 s`
-- [ ] 8: `serve` in a terminal, `stop` from another ends it
-- [ ] 9: port 8631 busy: `port 8631 is used by another program`, exit 1
-- [ ] 10: over `ssh` with no desktop login: `start` reports what `launchctl` says, nothing stays loaded
-- [ ] 11: a copy in `/tmp` (`/private/tmp`): `serve`, then `stop` from the same copy; note what it says
+- [ ] 1: `start` работает; `plutil -lint` принимает plist; в `launchctl print` есть `pid = N`, совпадающий с `/health`, и `program = <бинарник>`. Повторный `start` выводит `already running`
+- [ ] 2: агент продолжает работать после закрытия терминала
+- [ ] 3: после `restart` `/health` сразу отвечает с новым `pid`
+- [ ] 4: `stop`; повторный `stop` выводит `not running`; `restart` запускает агент
+- [ ] 5: plist изменён вручную, затем `restart`: нет ошибки `Bootstrap failed: 5`
+- [ ] 6: `startup on`, выйти и войти снова: агент работает; `stop` срабатывает; `startup off`, выйти и войти: агент не работает
+- [ ] 7: после `kill -SEGV` launchd перезапускает агент примерно за 10 с; со сломанным конфигом выводится `the agent did not answer within 10 s`
+- [ ] 8: `serve` в одном терминале, `stop` в другом останавливает агент
+- [ ] 9: порт 8631 занят: `port 8631 is used by another program`, код выхода 1
+- [ ] 10: по `ssh` без входа в графическую сессию: `start` передаёт то, что ответил `launchctl`, и ничего не остаётся загруженным
+- [ ] 11: копия в `/tmp` (это `/private/tmp`): `serve`, затем `stop` из той же копии; записать, что выводится
 
-## 5. The rest of the commands
+## 5. Остальные команды
 
-Each section of `TESTING.md`, run on the Mac:
+Каждый раздел `TESTING.md`, на Mac:
 
-- [ ] `install`, steps 1–11 (step 3: `xattr` on the installed binary)
-- [ ] `status`, steps 1–5, 8, 9
-- [ ] `config`, steps 1–5
-- [ ] `upgrade`, steps 1–4, 6–9 (step 7: launchd's `KeepAlive` did not hold the file; step 9: `codesign -v` and no quarantine)
-- [ ] `remove`, steps 1–6 (step 2: both plists gone, `launchctl print` finds no service, no agent after logging in again)
+- [ ] `install`, шаги 1–11 (шаг 3: `xattr` установленного бинарника)
+- [ ] `status`, шаги 1–5, 8, 9
+- [ ] `config`, шаги 1–5
+- [ ] `upgrade`, шаги 1–4, 6–9 (шаг 7: `KeepAlive` у launchd не держит файл; шаг 9: `codesign -v` и нет quarantine)
+- [ ] `remove`, шаги 1–6 (шаг 2: оба plist удалены, `launchctl print` не находит сервис, после повторного входа агента нет)
 
-## Minimum
+## Минимум
 
-If time is short: sections 1–3 and steps 1–6 of section 4. That is the path a real user takes.
+Если времени мало: разделы 1–3 и шаги 1–6 раздела 4. Это путь, которым пройдёт реальный пользователь.
